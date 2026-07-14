@@ -1,0 +1,42 @@
+# DIRS21 Sales Intelligence - Konfiguration
+#
+# Passe diese Datei an deinen HubSpot-Account an, ohne Code ändern zu müssen.
+
+hubspot:
+  # Mapping: fachlicher (interner) Name -> tatsächlicher HubSpot-Property-Name
+  # der Company-Objekte in deinem Account.
+  #
+  # WICHTIG: "adressgruppe" und "dirs21_id" sind Platzhalter-Property-Namen.
+  # Trage hier die echten internen Property-Namen aus deinem HubSpot-Account ein
+  # (zu finden in HubSpot unter Einstellungen -> Eigenschaften -> Unternehmen).
+  properties:
+    hotel_name: name
+    website: domain
+    ort: city
+    adressgruppe: adressgruppe
+    dirs21_id: dirs21_id
+
+  # Bildet die rohen HubSpot-Werte der Adressgruppe auf die kanonischen
+  # Kategorien der Vertriebslogik ab. Passe die rechte Seite an, falls dein
+  # HubSpot-Dropdown andere Beschriftungen oder interne Werte verwendet.
+  adressgruppe_mapping:
+    kunde:
+      - "Kunde"
+    neukunde:
+      - "Neukunde"
+    akquise:
+      - "Akquise"
+    ehemaliger_kunde:
+      - "ehemaliger Kunde"
+      - "Ehemaliger Kunde"
+    interessent:
+      - "Interessent"
+
+analysis:
+  # Standardwert für "Max. Anzahl Hotels analysieren" in der Oberfläche.
+  max_hotels_default: 10
+  # Timeout in Sekunden für HTTP-Requests beim Website-Crawling.
+  request_timeout_seconds: 10
+  # Maximale Anzahl Unterseiten pro Website, die zusätzlich zur Startseite
+  # gecrawlt werden (Buchung, Gutschein, Tagung, Event, Datenschutz, ...).
+  max_pages_per_website: 8
