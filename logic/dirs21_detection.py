@@ -22,6 +22,24 @@ technischen Nachweis) und "niedrig" (nur in der Datenschutzbestimmung
 gefunden) bleiben immer erkannt = false - das ist ein möglicher Hinweis,
 kein Beweis.
 
+PRODUKTSPEZIFITÄT (wichtig, siehe auch Regressionstest zu Hotel Ziegler):
+Ein generisches DIRS21-Buchungswidget/-Script ist auf vielen Websites
+sitegweit eingebunden (z.B. im Header-/Footer-Template) und erscheint daher
+auf praktisch JEDER Unterseite - auch auf einer Gutschein- oder Tagungsseite,
+OHNE dass dieses Widget selbst etwas mit einem Gutscheinshop oder MICE-Tool
+zu tun hat. Die bloße Ko-Existenz von "technischer Nachweis irgendwo auf der
+Seite" und "Seiten-URL passt thematisch" ist deshalb NICHT ausreichend, um
+dirs21_gutscheinshop_erkannt/dirs21_mice_erkannt auf true zu setzen - sonst
+wird eine reine DIRS21-Direktbuchung fälschlich auch als DIRS21-Gutscheinshop
+bzw. -MICE-Tool gewertet.
+
+Stattdessen muss das DIRS21/TourOnline-Kennzeichen UND ein produktspezifischer
+Hinweis (z.B. "gutschein"/"voucher" für den Gutscheinshop) INNERHALB
+DESSELBEN technischen Elements (derselbe iFrame-src, Script-src oder
+Buchungslink) vorkommen - nur dann ist der Nachweis eindeutig diesem Produkt
+zuordenbar, statt nur zufällig auf einer thematisch passenden Seite zu
+erscheinen.
+
 DIRS21 PLUS hat aktuell kein öffentlich unterscheidbares technisches Merkmal
 (PLUS-Buchungen laufen über dieselbe Technik wie die reguläre
 DIRS21-Direktbuchung) - dirs21_plus_erkannt bleibt daher bewusst konservativ
@@ -42,6 +60,14 @@ from bs4 import BeautifulSoup
 # (siehe logic/pipeline.py, das diese Liste lädt und hier übergibt).
 DEFAULT_DIRS21_KEYWORDS = ["dirs21", "touronline ag", "touronline"]
 
+# Produktspezifische Hinweise, die - NUR wenn sie im selben technischen
+# Element (iFrame-/Script-src oder Link-Ziel) wie ein DIRS21-Kennzeichen
+# vorkommen - dieses Element eindeutig einem Modul zuordnen. Eine bloße
+# Erwähnung dieser Wörter im sichtbaren Seitentext reicht dafür NICHT aus
+# (siehe logic/scoring.py für die fachliche, funktionsbasierte Erkennung).
+GUTSCHEIN_PRODUCT_HINTS = ["gutschein", "voucher"]
+MICE_PRODUCT_HINTS = ["tagung", "konferenz", "seminar", "meeting", "mice", "bankett"]
+
 
 def _page_kind(url: str) -> str:
     u = url.lower()
@@ -59,14 +85,19 @@ def _page_kind(url: str) -> str:
 
 
 def _extract_sources(html: str) -> dict:
-    """Sammelt sichtbaren Text, Link-Ziele, iFrame- und Script-Quellen sowie Rohquelltext."""
+    """Sammelt sichtbaren Text, Rohquelltext sowie einzelne Link-Ziele,
+    iFrame- und Script-Quellen (als Liste, nicht zusammengefügt - siehe
+    _technical_embeds, das jedes Element einzeln auf Produktspezifität
+    prüfen muss)."""
     soup = BeautifulSoup(html, "html.parser")
     return {
         "visible_text": soup.get_text(separator=" ").lower(),
-        "link_hrefs": " ".join(a.get("href", "") for a in soup.find_all("a")).lower(),
-        "iframe_srcs": " ".join(f.get("src", "") for f in soup.find_all("iframe")).lower(),
-        "script_srcs": " ".join(s.get("src", "") for s in soup.find_all("script")).lower(),
         "raw_source": html.lower(),
+        "embeds": (
+            [a.get("href", "").lower() for a in soup.find_all("a") if a.get("href")]
+            + [f.get("src", "").lower() for f in soup.find_all("iframe") if f.get("src")]
+            + [s.get("src", "").lower() for s in soup.find_all("script") if s.get("src")]
+        ),
     }
 
 
@@ -81,9 +112,15 @@ def detect_dirs21(pages: dict, dirs21_keywords=None) -> dict:
         DIRS21/TourOnline-Kennzeichen (Default: DEFAULT_DIRS21_KEYWORDS).
 
     Rückgabe:
-        direktbuchung_erkannt, gutscheinshop_erkannt, plus_erkannt,
-        mice_erkannt: bool - NUR bei technischem Nachweis (Erkennungssicherheit
-            "hoch"). plus_erkannt bleibt aktuell immer false (siehe Modul-Docstring).
+        direktbuchung_erkannt: bool - technischer DIRS21/TourOnline-Nachweis
+            irgendwo auf der Seite (unabhängig vom Produkt).
+        gutscheinshop_erkannt, mice_erkannt: bool - NUR true, wenn ein
+            DIRS21/TourOnline-Kennzeichen UND ein produktspezifischer Hinweis
+            im selben technischen Element (iFrame/Script/Link) gefunden
+            wurden (siehe Modul-Docstring - verhindert, dass ein sitegweit
+            eingebundenes Direktbuchungswidget fälschlich als Gutscheinshop/
+            MICE-Tool gilt).
+        plus_erkannt: bool - bleibt aktuell immer false (siehe Modul-Docstring).
         erkennungsquelle: str - wo die stärkste technische Evidenz gefunden wurde
         erkennungssicherheit: "hoch" | "mittel" | "niedrig" | ""
         hinweis: optionaler Zusatzhinweis (z.B. Datenschutz-only-Fund oder
@@ -103,9 +140,11 @@ def detect_dirs21(pages: dict, dirs21_keywords=None) -> dict:
     if not pages:
         return result
 
-    strong_findings = []    # (kind, url) - eingebettetes Widget/Link auf DIRS21-Domain = technischer Nachweis
-    medium_findings = []    # (kind, url) - bloße Textnennung, KEIN technischer Nachweis
+    strong_findings = []      # (kind, url) - technischer Nachweis (irgendein DIRS21-Element)
+    medium_findings = []      # (kind, url) - bloße Textnennung, KEIN technischer Nachweis
     privacy_only_urls = []
+    gutscheinshop_evidence = False
+    mice_evidence = False
 
     for url, html in pages.items():
         try:
@@ -115,11 +154,8 @@ def detect_dirs21(pages: dict, dirs21_keywords=None) -> dict:
 
         kind = _page_kind(url)
 
-        embedded_widget = (
-            _any_keyword(src["iframe_srcs"], keywords)
-            or _any_keyword(src["script_srcs"], keywords)
-            or _any_keyword(src["link_hrefs"], keywords)
-        )
+        dirs21_embeds = [embed for embed in src["embeds"] if _any_keyword(embed, keywords)]
+        embedded_widget = bool(dirs21_embeds)
         mentioned = _any_keyword(src["visible_text"], keywords) or _any_keyword(src["raw_source"], keywords)
 
         if not (embedded_widget or mentioned):
@@ -131,6 +167,16 @@ def detect_dirs21(pages: dict, dirs21_keywords=None) -> dict:
 
         if embedded_widget:
             strong_findings.append((kind, url))
+            # Produktspezifität: Das DIRS21-Kennzeichen UND der produktspezifische
+            # Hinweis müssen im selben Element stehen - ein generisches, sitegweit
+            # eingebundenes Widget (ohne Produkthinweis in seiner eigenen
+            # src/URL) reicht NICHT, nur weil es auch auf einer thematisch
+            # passenden Seite (z.B. /gutscheine) auftaucht.
+            for embed in dirs21_embeds:
+                if _any_keyword(embed, GUTSCHEIN_PRODUCT_HINTS):
+                    gutscheinshop_evidence = True
+                if _any_keyword(embed, MICE_PRODUCT_HINTS):
+                    mice_evidence = True
         else:
             medium_findings.append((kind, url))
 
@@ -144,14 +190,13 @@ def detect_dirs21(pages: dict, dirs21_keywords=None) -> dict:
         # davon, auf welcher Seite es gefunden wurde.
         result["direktbuchung_erkannt"] = True
 
-        # Gutscheinshop/MICE: Nur erkannt, wenn das Widget technisch eindeutig
-        # der jeweiligen Themenseite zugeordnet ist (die Gutschein- bzw.
-        # Tagungsanfrage-Seite selbst bindet die DIRS21-Technik ein). Eine
-        # bloße Ko-Existenz von Widget (z.B. auf der Startseite) und Gutschein-
-        # /Tagungs-Erwähnung an anderer Stelle reicht NICHT aus.
-        if any(kind == "gutschein" for kind, _ in strong_findings):
+        # Gutscheinshop/MICE: Nur erkannt, wenn das DIRS21-Kennzeichen und ein
+        # produktspezifischer Hinweis im selben technischen Element stehen
+        # (siehe oben) - nicht schon bei bloßer Ko-Existenz mit einer
+        # thematisch passenden Seiten-URL.
+        if gutscheinshop_evidence:
             result["gutscheinshop_erkannt"] = True
-        if any(kind == "mice" for kind, _ in strong_findings):
+        if mice_evidence:
             result["mice_erkannt"] = True
 
         # PLUS: bewusst kein technisches Merkmal verfügbar (siehe Modul-
