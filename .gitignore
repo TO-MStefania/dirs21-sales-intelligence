@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# DIRS21 Sales Intelligence: generierte Excel-Exports und Eingabedaten
+# nicht versionieren (können echte Kundendaten enthalten)
+exports/*
+!exports/.gitkeep
+data/*.xlsx
+data/*.xls
+!data/.gitkeep
+
+# Temporäre Dateien
+*.tmp
+*~

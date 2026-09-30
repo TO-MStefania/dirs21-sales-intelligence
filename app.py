@@ -76,7 +76,7 @@ def load_config():
 
 def analyze_company(raw_props: dict, config: dict) -> dict:
     prop_map = config["hubspot"]["properties"]
-    adressgruppe_mapping = config["hubspot"].get("adressgruppe_mapping", {})
+    adressgruppe_mapping = config.get("adressgruppe_mapping", {})
     max_pages = config.get("analysis", {}).get("max_pages_per_website", 8)
     timeout = config.get("analysis", {}).get("request_timeout_seconds", 10)
 

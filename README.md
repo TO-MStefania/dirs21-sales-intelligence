@@ -1,80 +1,110 @@
 # DIRS21 Sales Intelligence
 
-Streamlit-Webapp, die zu einer HubSpot-Liste von Hotels automatisch
-öffentlich sichtbare Vertriebschancen für DIRS21-Zusatzmodule (**PLUS**,
-**Gutscheinshop**, **MICE**, **Event-Assistent**) ermittelt - auf Basis der
-DIRS21 Sales Knowledge Base v0.3.
+Analyse-Tool, das zu einer Liste von Hotels automatisch öffentlich sichtbare
+Vertriebschancen für DIRS21-Zusatzmodule (**PLUS**, **Gutscheinshop**,
+**MICE**, **Event-Assistent**) ermittelt - auf Basis der DIRS21 Sales
+Knowledge Base v0.3.
 
-Die App liest die Unternehmen einer HubSpot-Liste (nur lesend, keine
-Kontakte/E-Mails/Telefonnummern), analysiert die öffentliche Website jedes
-Hotels, erkennt Hinweise auf bestehende DIRS21-Nutzung und bewertet den
-fachlichen Fit zu den vier Zusatzmodulen. Das Ergebnis wird als Tabelle
-angezeigt und als Excel-Datei exportiert.
+Es gibt zwei Wege, die Unternehmensliste einzuspeisen:
 
-## Schritt-für-Schritt-Anleitung
+- **`analyze.py`** (primär, lokal) - liest einen HubSpot-Excel-Export ein.
+  Keine HubSpot-API-Anbindung nötig.
+- **`app.py`** (optional) - Streamlit-Webapp, die Unternehmen direkt über die
+  HubSpot-API aus einer HubSpot-Liste lädt.
 
-1. **Repository öffnen** - dieses Repository lokal klonen oder in einer
-   Streamlit-Cloud-/Codespace-Umgebung öffnen.
-2. **Dependencies installieren**
+Beide nutzen dieselbe fachliche Logik in `logic/` und dieselbe `config.yaml`.
+
+## Lokales CLI-Tool (analyze.py) - Schritt-für-Schritt-Anleitung
+
+1. **Dependencies installieren**
    ```bash
    pip install -r requirements.txt
    ```
-3. **HubSpot Token als Secret hinterlegen**
-   - Lokal: Datei `.streamlit/secrets.toml.example` nach
-     `.streamlit/secrets.toml` kopieren und dort den echten HubSpot Private
-     App Token eintragen. Alternativ eine `.env`-Datei mit
-     `HUBSPOT_PRIVATE_APP_TOKEN=...` anlegen.
-   - Streamlit Cloud: Token unter "App settings -> Secrets" im gleichen
-     TOML-Format hinterlegen.
-   - **Der Token wird niemals im Code gespeichert** und ist ausschließlich
-     lesend berechtigt (Scope `crm.objects.companies.read` genügt).
-4. **`config.yaml` anpassen** - insbesondere die HubSpot-Property-Namen
-   `adressgruppe` und `dirs21_id` sind Platzhalter und müssen auf die
-   tatsächlichen internen Property-Namen deines HubSpot-Accounts angepasst
-   werden (HubSpot -> Einstellungen -> Eigenschaften -> Unternehmen).
-5. **App starten**
+2. **HubSpot-Excel-Datei in das Projekt legen**, z.B. nach `data/bodensee.xlsx`.
+3. **`config.yaml` prüfen und Spaltennamen anpassen** - im Abschnitt
+   `excel.columns` müssen die Spaltenüberschriften deines Exports stehen
+   (z.B. `Unternehmensname`, `Unternehmensdomain`, `Ort`, `Adressgruppe`,
+   `DIRS21-ID`). Passe außerdem bei Bedarf `adressgruppe_mapping` an, falls
+   dein Export andere Beschriftungen als "Kunde"/"Neukunde"/... verwendet.
+4. **Testlauf mit wenigen Unternehmen starten**
+   ```bash
+   python analyze.py data/bodensee.xlsx --limit 5
+   ```
+5. **Vollständige Analyse starten**
+   ```bash
+   python analyze.py data/bodensee.xlsx
+   ```
+   Optional mit eigenem Ausgabedateinamen:
+   ```bash
+   python analyze.py data/bodensee.xlsx exports/bodensee_ergebnis.xlsx
+   ```
+6. **Ergebnisdatei im `exports/`-Ordner öffnen.** Ohne eigenen Dateinamen
+   wird automatisch `exports/<eingabedatei>_analysiert_<zeitstempel>.xlsx`
+   erzeugt.
+
+Während der Analyse zeigt das Terminal den Fortschritt an
+(`[3/66] Hotel Beispiel wird analysiert...`). Nach jeweils N Unternehmen
+(Standard: 5, einstellbar in `config.yaml` unter `analysis.save_interval`)
+wird die Ergebnisdatei bereits zwischengespeichert, damit bei einem Abbruch
+nicht die gesamte bisherige Analyse verloren geht.
+
+## Optionale Streamlit-Webapp (app.py, HubSpot-API)
+
+Alternativ kann eine Streamlit-Oberfläche genutzt werden, die Unternehmen
+direkt aus einer HubSpot-Liste per API lädt (read-only, kein Excel-Export
+nötig):
+
+1. `.streamlit/secrets.toml.example` nach `.streamlit/secrets.toml` kopieren
+   und dort einen HubSpot Private App Token (Scope
+   `crm.objects.companies.read`) eintragen, oder als Umgebungsvariable
+   `HUBSPOT_PRIVATE_APP_TOKEN` setzen. Der Token wird niemals im Code
+   gespeichert.
+2. `config.yaml` -> Abschnitt `hubspot.properties` auf die internen
+   HubSpot-Property-Namen deines Accounts anpassen.
+3. Starten:
    ```bash
    streamlit run app.py
    ```
-6. **HubSpot Listen-ID eingeben**, die maximale Anzahl zu analysierender
-   Hotels festlegen (Standard: 10) und auf **"Analyse starten"** klicken.
-
-Ohne gesetzten Token startet die App trotzdem und zeigt eine verständliche
-Fehlermeldung an - der "Analyse starten"-Button bleibt dann deaktiviert.
+4. HubSpot Listen-ID eingeben und "Analyse starten" klicken.
 
 ## Projektstruktur
 
 ```
-app.py                          Streamlit-Oberfläche und Orchestrierung
-config.yaml                     HubSpot-Property-Mapping & Analyse-Einstellungen
+analyze.py                      Lokales CLI-Tool: Excel-Import -> Analyse -> Excel-Export
+app.py                           Optionale Streamlit-Oberfläche (HubSpot-API)
+config.yaml                      Spalten-/Property-Mapping & Analyse-Einstellungen
 requirements.txt
-.streamlit/secrets.toml.example Beispiel für Secrets (echte secrets.toml wird nicht committet)
+.streamlit/secrets.toml.example  Beispiel für Secrets (nur für app.py)
 logic/
-  hubspot_client.py              HubSpot API Zugriff (read-only, Listen-Abfrage modular)
-  website_crawler.py             Öffentliches Crawling der Hotel-Website
-  dirs21_detection.py            Erkennung öffentlicher DIRS21-Nutzungs-Hinweise
-  status_detection.py            Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
-  scoring.py                     Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
-  recommendations.py             Vertriebliche Handlungsempfehlung & Priorisierung
-  exporter.py                    Excel-Export
-data/                            Für optionale statische Zusatzdaten
-exports/                         Lokaler Ablageort für Excel-Exports (nicht versioniert)
+  excel_import.py                 Liest HubSpot-Excel-Exporte gemäß config.yaml ein
+  hubspot_client.py                HubSpot API Zugriff (read-only, nur für app.py)
+  website_crawler.py               Öffentliches Crawling der Hotel-Website
+  dirs21_detection.py              Erkennung öffentlicher DIRS21-Nutzungs-Hinweise
+  status_detection.py              Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
+  scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
+  recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung
+  exporter.py                      Excel-Export
+data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert)
+exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert)
 ```
 
-## HubSpot-Integration
+## Excel-Import (analyze.py)
 
-- Nutzt einen **HubSpot Private App Token** mit ausschließlich lesenden
-  Scopes (z.B. `crm.objects.companies.read`).
-- Es gibt **keinen Schreibzugriff** auf HubSpot.
-- Es werden **keine Kontakte, E-Mail-Adressen oder Telefonnummern**
-  abgerufen - nur die in `config.yaml` konfigurierten Company-Properties.
-- Die Listen-Abfrage in `logic/hubspot_client.py` ist bewusst modular
-  aufgebaut: HubSpot bietet je nach Account-Version unterschiedliche
-  Listen-Endpunkte an. Die App versucht zuerst die aktuelle CRM v3 Lists API
-  und fällt bei Bedarf auf eine ältere Companies-Lists-API zurück. Im Code
-  ist mit Kommentaren `HIER ANPASSEN` markiert, wo eine andere API-Version
-  ergänzt werden kann, falls dein Account einen abweichenden Endpunkt
-  benötigt.
+Benötigte Spalten pro Unternehmen (Namen über `config.yaml` -> `excel.columns`
+gemappt, da sich die exakten Spaltenüberschriften je Export unterscheiden
+können):
+
+- Unternehmensname (Pflicht)
+- Website/Domain (Pflicht - ohne Website ist keine Website-Analyse möglich)
+- Ort (optional)
+- Adressgruppe (optional, aber wichtig für den CRM-Status)
+- DIRS21-ID (optional, reiner Identifikator)
+- HubSpot Record ID (optional)
+
+Fehlt eine optionale Spalte im Export komplett, läuft die Analyse trotzdem.
+Fehlt bei einem Unternehmen der Name oder die Website, wird der Datensatz
+trotzdem übernommen (Reihenfolge bleibt erhalten), aber über die Spalte
+`pruefhinweis` markiert. Komplett leere Zeilen werden übersprungen.
 
 ## Fachliche Logik (Kurzüberblick)
 
@@ -85,7 +115,7 @@ v0.3 und wurde hier nur technisch umgesetzt, nicht neu erfunden:
   im Scoring. Der aktive Kundenstatus ergibt sich ausschließlich aus der
   **Adressgruppe** (Kunde / Neukunde / Akquise / ehemaliger Kunde /
   Interessent / unklar).
-- Die öffentliche DIRS21-Erkennung unterscheidet Erkennungssicherheit
+- Die öffentliche DIRS21-Erkennung unterscheidet eine Erkennungssicherheit
   (hoch/mittel/niedrig) und schreibt bei fehlender Evidenz niemals
   "nutzt DIRS21 nicht", sondern "keine öffentlich sichtbare DIRS21-Nutzung
   erkannt". Ein Fund nur in der Datenschutzbestimmung gilt explizit nur als
@@ -94,26 +124,36 @@ v0.3 und wurde hier nur technisch umgesetzt, nicht neu erfunden:
   Hotelangebot zum jeweiligen Modul passt - unabhängig von CRM-Status,
   DIRS21-ID oder öffentlicher DIRS21-Erkennung.
 - Die **vertriebliche Priorisierung** (Statusklasse, Verkaufsmodus,
-  Gesamtpriorität A-D, Gesprächseinstieg) kombiniert diesen fachlichen Fit
-  mit Adressgruppe und öffentlicher DIRS21-Erkennung.
+  Gesamtpriorität A-D) kombiniert diesen fachlichen Fit mit Adressgruppe und
+  öffentlicher DIRS21-Erkennung.
 
-Details siehe die Docstrings/Kommentare in den jeweiligen `logic/*.py`-Modulen.
+Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
 
 ## Datenschutz & Sicherheit
 
-- Kein direkter Schreibzugriff auf HubSpot, nur lesender Zugriff.
-- Keine Kontakte, E-Mails oder Telefonnummern werden abgerufen oder
-  verarbeitet.
-- Der HubSpot Token wird niemals im Code gespeichert, sondern ausschließlich
-  über die Umgebungsvariable/das Secret `HUBSPOT_PRIVATE_APP_TOKEN` gelesen.
-- `.gitignore` schließt `.env`, `.streamlit/secrets.toml`, `exports/` und
-  temporäre Dateien von der Versionierung aus.
+- `analyze.py` benötigt keinen HubSpot-Zugriff - es liest nur die lokale
+  Excel-Datei und öffentlich erreichbare Websites.
+- Die optionale HubSpot-API-Anbindung (`app.py`) hat keinen Schreibzugriff
+  auf HubSpot, nur lesenden Zugriff, und ruft keine Kontakte, E-Mails oder
+  Telefonnummern ab.
+- Der HubSpot Token wird niemals im Code gespeichert.
+- `.gitignore` schließt `.env`, `.streamlit/secrets.toml`, Eingabe-Excel-
+  Dateien in `data/`, generierte Exporte in `exports/` und temporäre Dateien
+  von der Versionierung aus.
 
-## Fehlerverhalten
+## Fehlerverhalten & Performance
 
-- Fehlt der HubSpot Token, startet die App trotzdem und zeigt eine
-  verständliche Fehlermeldung - der "Analyse starten"-Button ist deaktiviert.
-- Fehler bei einzelnen Hotels (nicht erreichbare Website, Timeout, HubSpot-
-  Fehler pro Datensatz) brechen die Gesamtanalyse nicht ab, sondern werden in
-  den Spalten `crawler_status` bzw. `pruefhinweis` dokumentiert.
-- Während der Analyse zeigt die App eine Fortschrittsanzeige pro Hotel.
+- Fehler bei einzelnen Unternehmen (nicht erreichbare Website, Timeout,
+  SSL-Probleme, ungewöhnliches HTML, fehlende Pflichtfelder) brechen die
+  Gesamtanalyse nicht ab, sondern werden in den Spalten `crawler_status`
+  bzw. `pruefhinweis` dokumentiert - die Analyse läuft mit dem nächsten
+  Unternehmen weiter.
+- Domains ohne `http://`/`https://` werden automatisch normalisiert.
+- Pro Website werden nur die Startseite sowie eine begrenzte Anzahl
+  thematisch relevanter Unterseiten geladen (Buchung, Gutschein, Tagung,
+  Event, Datenschutz, ...), um die Analyse vieler Unternehmen nicht
+  unnötig zu verlangsamen (einstellbar über
+  `analysis.max_pages_per_website` in `config.yaml`).
+- Während der Analyse zeigt `analyze.py` einen Fortschritt pro Unternehmen
+  im Terminal an und speichert regelmäßig einen Zwischenstand der
+  Ergebnis-Excel-Datei.
