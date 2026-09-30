@@ -267,6 +267,27 @@ Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
   im Terminal an und speichert regelmäßig einen Zwischenstand der
   Ergebnis-Excel-Datei.
 
+## Excel-Formatierung
+
+Die Ergebnis-Excel-Datei (`analyze.py` und der Download-Button in `app.py`
+nutzen dieselbe zentrale Exportfunktion in `logic/exporter.py`) ist als
+Ampelsystem formatiert, ohne die Werte selbst zu verändern:
+
+- `gesamtprioritaet`: A kräftiges Grün, B helles Grün, C Gelb/Orange, D
+  helles Rot (fett).
+- Fit-Score-Spalten (`plus_fit_score`, `gutscheinshop_fit_score`,
+  `mice_fit_score`, `event_assistent_fit_score`,
+  `fachliche_top_empfehlung_score`): grün (80-100) bis hellrot (0-19),
+  dieselben Grenzen wie `logic/scoring.fit_band`.
+- `pruefhinweis`: dezentes Warn-Orange, wenn nicht leer.
+- Erkannte DIRS21-Produkte (`dirs21_direktbuchung_erkannt`,
+  `dirs21_gutscheinshop_erkannt`, `dirs21_plus_erkannt`,
+  `dirs21_mice_erkannt`): dezentes Grün bei `true`, neutral bei `false`.
+- Kopfzeile fett, AutoFilter, erste Zeile fixiert, sinnvolle
+  Spaltenbreiten, Zeilenumbruch für lange Textspalten
+  (`gefundene_merkmale`, `verkaufsmodus`, `vertriebliche_prioritaetsaktion`,
+  `zusatzmodul_als_argument`, `pruefhinweis`).
+
 ## Tests
 
 Regressionstests (aktuell für die Empfehlungslogik in
