@@ -6,6 +6,18 @@ der öffentlich erkannten DIRS21-Nutzung (logic/status_detection.py,
 logic/dirs21_detection.py) zu konkreten Vertriebsempfehlungen. Trennt dabei
 klar zwischen fachlicher Einschätzung (Modul passt zum Hotelangebot) und
 vertrieblicher Handlungsempfehlung (was der Vertrieb als Nächstes tun sollte).
+
+GRUNDREGEL: Ein DIRS21-Produkt, das technisch bereits eindeutig als genutzt
+erkannt wurde (dirs21_*_erkannt = true), darf nicht erneut als Empfehlung
+ausgespielt werden - weder als fachliche_top_empfehlung noch als
+zusatzmodul_als_argument, noch als "neu verkaufen"-Vorschlag in der
+vertrieblichen_prioritaetsaktion. Der fachliche Fit-Score selbst (siehe
+logic/scoring.py) bleibt davon unberührt - er wird weiterhin für jedes Modul
+berechnet und gespeichert, nur die Empfehlung filtert bereits genutzte
+Module heraus. Der Event-Assistent ist von dieser Filterung ausgenommen, da
+er technisch nicht zuverlässig öffentlich erkennbar ist (siehe
+logic/dirs21_detection.py) und deshalb nie als "bereits genutzt" markiert
+werden kann.
 """
 
 from .scoring import fit_band
@@ -18,13 +30,35 @@ MODULE_DISPLAY_NAMES = {
     "event_assistent": "Event-Assistent",
 }
 
+# Ordnet jedem Modul das row-Feld zu, das eine bereits erkannte DIRS21-Nutzung
+# anzeigt. event_assistent ist absichtlich NICHT enthalten (siehe Docstring).
+ALREADY_USED_FLAG_BY_MODULE = {
+    "plus": "dirs21_plus_erkannt",
+    "gutscheinshop": "dirs21_gutscheinshop_erkannt",
+    "mice": "dirs21_mice_erkannt",
+}
+
 MIN_POTENTIAL_SCORE = 40
+KEIN_MODUL_LABEL = "Kein zusätzliches Modul empfohlen"
 
 
 def _ranked_modules(scoring_result: dict):
     """Sortiert Module nach Fit-Score absteigend, stabil nach MODULE_ORDER."""
     scored = [(name, scoring_result[name]["score"]) for name in MODULE_ORDER]
     return sorted(scored, key=lambda item: (-item[1], MODULE_ORDER.index(item[0])))
+
+
+def _already_used(module_name: str, row: dict) -> bool:
+    flag_key = ALREADY_USED_FLAG_BY_MODULE.get(module_name)
+    return bool(flag_key and row.get(flag_key))
+
+
+def _recommendable_modules(ranked, row: dict):
+    """Filtert bereits als DIRS21-Produkt genutzte Module heraus (Grundregel,
+    siehe Modul-Docstring) und danach Module ohne relevanten fachlichen Fit
+    (Fit-Band "kein Fit", siehe logic/scoring.fit_band)."""
+    not_used = [(name, score) for name, score in ranked if not _already_used(name, row)]
+    return [(name, score) for name, score in not_used if fit_band(score) != "kein Fit"]
 
 
 def _gesamtprioritaet(canonical_adressgruppe: str, top_score: int) -> str:
@@ -42,8 +76,11 @@ def _gesamtprioritaet(canonical_adressgruppe: str, top_score: int) -> str:
     return "D"
 
 
-def _vertriebliche_prioritaetsaktion(canonical_adressgruppe: str, direktbuchung_erkannt: bool, top_module_display: str) -> str:
+def _vertriebliche_prioritaetsaktion(canonical_adressgruppe: str, direktbuchung_erkannt: bool,
+                                      top_module_display: str, has_recommendable_module: bool) -> str:
     if canonical_adressgruppe == "kunde":
+        if not has_recommendable_module:
+            return "Kein weiteres Zusatzmodul zu empfehlen - bereits erkannte DIRS21-Module nicht erneut anbieten"
         if direktbuchung_erkannt:
             return f"{top_module_display} als Cross-Selling prüfen"
         return "Aktiven DIRS21-Bestand prüfen, danach Zusatzmodule besprechen"
@@ -61,7 +98,8 @@ def _zusatzmodul_als_argument(canonical_adressgruppe: str, top_module_display: s
 
 
 def _vertriebliche_begruendung(canonical_adressgruppe: str, crm_status_label: str, direktbuchung_erkannt: bool,
-                                erkennungssicherheit: str, top_module_display: str, top_score: int) -> str:
+                                erkennungssicherheit: str, top_module_display: str, top_score: int,
+                                has_recommendable_module: bool) -> str:
     band = fit_band(top_score)
     teile = [f"Adressgruppe deutet auf '{crm_status_label}' hin."]
 
@@ -71,7 +109,13 @@ def _vertriebliche_begruendung(canonical_adressgruppe: str, crm_status_label: st
     else:
         teile.append("Keine öffentlich sichtbare DIRS21-Nutzung erkannt.")
 
-    teile.append(f"Fachlicher Fit für {top_module_display} ist {band} ({top_score}/100).")
+    if has_recommendable_module:
+        teile.append(f"Fachlicher Fit für {top_module_display} ist {band} ({top_score}/100).")
+    else:
+        teile.append(
+            "Alle fachlich passenden Module sind bereits als DIRS21-Produkt erkannt oder haben keinen "
+            "relevanten Fit - kein weiteres Modul zu empfehlen."
+        )
 
     if canonical_adressgruppe == "unklar":
         teile.append("Adressgruppe ist leer/unbekannt - Vertriebspriorität daher zurückhaltend eingestuft.")
@@ -80,14 +124,14 @@ def _vertriebliche_begruendung(canonical_adressgruppe: str, crm_status_label: st
 
 
 def _gespraechseinstieg(canonical_adressgruppe: str, hotel_name: str, hoteltyp: str, top_module_display: str,
-                         top_score: int, direktbuchung_erkannt: bool) -> str:
+                         direktbuchung_erkannt: bool, has_recommendable_module: bool) -> str:
     hotel_bezug = hotel_name or "das Hotel"
     hoteltyp_teil = f" als {hoteltyp}" if hoteltyp and "unbekannt" not in hoteltyp else ""
 
-    if top_score < 20:
+    if not has_recommendable_module:
         return (
-            f"Guten Tag, wir würden uns gerne einen Überblick über die aktuelle Aufstellung von "
-            f"{hotel_bezug}{hoteltyp_teil} verschaffen und besprechen, wo DIRS21 unterstützen kann."
+            f"Guten Tag, {hotel_bezug} setzt die fachlich passenden DIRS21-Module bereits ein - wir würden "
+            "gerne prüfen, ob der bestehende Einsatz optimal läuft, statt weitere Module vorzuschlagen."
         )
 
     if canonical_adressgruppe == "kunde":
@@ -118,16 +162,24 @@ def _gespraechseinstieg(canonical_adressgruppe: str, hotel_name: str, hoteltyp: 
 def build_recommendation(canonical_adressgruppe: str, row: dict, scoring_result: dict) -> dict:
     """
     row: bereits befüllte Zeilen-Felder, benötigt u.a. crm_status,
-    dirs21_direktbuchung_erkannt, dirs21_erkennungssicherheit, hotel_name,
-    erkannter_hoteltyp.
+    dirs21_direktbuchung_erkannt, dirs21_gutscheinshop_erkannt,
+    dirs21_plus_erkannt, dirs21_mice_erkannt, dirs21_erkennungssicherheit,
+    hotel_name, erkannter_hoteltyp.
     """
     ranked = _ranked_modules(scoring_result)
-    top_name, top_score = ranked[0]
-    top_display = MODULE_DISPLAY_NAMES[top_name]
+    recommendable = _recommendable_modules(ranked, row)
+    has_recommendable_module = bool(recommendable)
+
+    if has_recommendable_module:
+        top_name, top_score = recommendable[0]
+        top_display = MODULE_DISPLAY_NAMES[top_name]
+    else:
+        top_score = 0
+        top_display = KEIN_MODUL_LABEL
 
     weitere = [
         MODULE_DISPLAY_NAMES[name]
-        for name, score in ranked[1:]
+        for name, score in recommendable[1:]
         if score >= MIN_POTENTIAL_SCORE
     ]
 
@@ -138,9 +190,12 @@ def build_recommendation(canonical_adressgruppe: str, row: dict, scoring_result:
         "fachliche_top_empfehlung_score": top_score,
         "weitere_fachliche_potenziale": ", ".join(weitere),
         "vertriebliche_prioritaetsaktion": _vertriebliche_prioritaetsaktion(
-            canonical_adressgruppe, direktbuchung_erkannt, top_display
+            canonical_adressgruppe, direktbuchung_erkannt, top_display, has_recommendable_module
         ),
-        "zusatzmodul_als_argument": _zusatzmodul_als_argument(canonical_adressgruppe, top_display, top_score),
+        "zusatzmodul_als_argument": (
+            _zusatzmodul_als_argument(canonical_adressgruppe, top_display, top_score)
+            if has_recommendable_module else ""
+        ),
         "gesamtprioritaet": _gesamtprioritaet(canonical_adressgruppe, top_score),
         "vertriebliche_begruendung": _vertriebliche_begruendung(
             canonical_adressgruppe,
@@ -149,13 +204,14 @@ def build_recommendation(canonical_adressgruppe: str, row: dict, scoring_result:
             row.get("dirs21_erkennungssicherheit", ""),
             top_display,
             top_score,
+            has_recommendable_module,
         ),
         "gespraechseinstieg": _gespraechseinstieg(
             canonical_adressgruppe,
             row.get("hotel_name", ""),
             row.get("erkannter_hoteltyp", ""),
             top_display,
-            top_score,
             direktbuchung_erkannt,
+            has_recommendable_module,
         ),
     }

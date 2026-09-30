@@ -226,6 +226,16 @@ v0.3 und wurde hier nur technisch umgesetzt, nicht neu erfunden:
 - Die **vertriebliche Priorisierung** (Statusklasse, Verkaufsmodus,
   Gesamtpriorität A-D) kombiniert diesen fachlichen Fit mit Adressgruppe und
   öffentlicher DIRS21-Erkennung.
+- **Bereits genutzte DIRS21-Produkte werden nicht erneut empfohlen:** Ist
+  ein Modul technisch bereits eindeutig als genutzt erkannt (z.B.
+  `dirs21_gutscheinshop_erkannt = true`), erscheint es nicht mehr als
+  `fachliche_top_empfehlung` oder `zusatzmodul_als_argument`, und
+  `vertriebliche_prioritaetsaktion` schlägt nicht vor, es neu zu verkaufen.
+  Der fachliche Fit-Score des Moduls (`*_fit_score`) wird davon unberührt
+  weiterhin berechnet und gespeichert. Sind alle fachlich passenden Module
+  bereits genutzt, ist `fachliche_top_empfehlung = "Kein zusätzliches Modul
+  empfohlen"`. Der Event-Assistent ist von dieser Filterung ausgenommen, da
+  er technisch nicht zuverlässig öffentlich erkennbar ist.
 
 Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
 
@@ -256,3 +266,13 @@ Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
 - Während der Analyse zeigt `analyze.py` einen Fortschritt pro Unternehmen
   im Terminal an und speichert regelmäßig einen Zwischenstand der
   Ergebnis-Excel-Datei.
+
+## Tests
+
+Regressionstests (aktuell für die Empfehlungslogik in
+`logic/recommendations.py`) laufen ohne zusätzliche Abhängigkeiten über das
+Python-Standardmodul `unittest`:
+
+```bash
+python -m unittest discover tests
+```
