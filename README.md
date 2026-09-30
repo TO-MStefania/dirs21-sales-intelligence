@@ -48,6 +48,62 @@ Während der Analyse zeigt das Terminal den Fortschritt an
 wird die Ergebnisdatei bereits zwischengespeichert, damit bei einem Abbruch
 nicht die gesamte bisherige Analyse verloren geht.
 
+## Windows-Setup (lokal, mit echtem Internetzugang)
+
+Die Website-Analyse braucht echten Internetzugang zu den Hotel-Domains. In
+gesandboxten Umgebungen (z.B. Cloud-Sessions) ist der Zugriff auf beliebige
+externe Websites oft aus Sicherheitsgründen gesperrt. Für einen echten
+Testlauf `analyze.py` daher lokal auf einem Windows-Rechner mit normalem
+Internetzugang ausführen:
+
+1. **Python installieren** (falls noch nicht vorhanden): Python 3.10 oder
+   neuer von [python.org](https://www.python.org/downloads/windows/). Beim
+   Installieren die Option **"Add python.exe to PATH"** aktivieren.
+2. **Projekt öffnen** - Eingabeaufforderung (cmd) oder PowerShell im
+   Projektordner öffnen (z.B. per Rechtsklick im Explorer -> "In Terminal
+   öffnen").
+3. **Virtuelle Umgebung anlegen und aktivieren** (empfohlen, aber optional):
+   ```bat
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+4. **Dependencies installieren:**
+   ```bat
+   pip install -r requirements.txt
+   ```
+5. **HubSpot-Excel-Datei in den `data`-Ordner legen**, z.B.
+   `data\bodensee.xlsx` (Explorer: Datei einfach in den Ordner
+   `dirs21-sales-intelligence\data` ziehen).
+6. **`config.yaml` prüfen** - die Spaltennamen unter `excel.columns` müssen
+   zu deinem Excel-Export passen (siehe oben).
+7. **Testlauf mit 5 Unternehmen:**
+   ```bat
+   python analyze.py data\bodensee.xlsx --limit 5
+   ```
+8. **Vollständige Analyse aller 66 Unternehmen** (erst nach erfolgreichem
+   Testlauf):
+   ```bat
+   python analyze.py data\bodensee.xlsx
+   ```
+9. **Ergebnisdatei öffnen** - liegt automatisch im Ordner `exports\`, z.B.
+   `exports\bodensee_analysiert_20250101_120000.xlsx`.
+
+Hinweise für Windows:
+
+- Pfade funktionieren sowohl mit Backslash (`data\bodensee.xlsx`, cmd-typisch)
+  als auch mit Schrägstrich (`data/bodensee.xlsx`) - Python akzeptiert beide
+  Schreibweisen.
+- Enthält der Pfad Leerzeichen, in Anführungszeichen setzen, z.B.
+  `python analyze.py "C:\Meine Dateien\bodensee.xlsx"`.
+- Falls Umlaute (ü, ö, ä) im Terminal falsch angezeigt werden, vorher
+  `chcp 65001` ausführen (stellt die Konsole auf UTF-8 um) oder Windows
+  Terminal / PowerShell 7 statt der klassischen `cmd.exe` verwenden.
+  `analyze.py` selbst bricht wegen Umlauten nie ab.
+- `python` muss den Befehl finden können (siehe Schritt 1, PATH-Option); statt
+  `python` funktioniert auf manchen Systemen auch `py`.
+- Die virtuelle Umgebung muss in jeder neuen Terminal-Sitzung erneut mit
+  `venv\Scripts\activate` aktiviert werden, bevor `analyze.py` läuft.
+
 ## Optionale Streamlit-Webapp (app.py, HubSpot-API)
 
 Alternativ kann eine Streamlit-Oberfläche genutzt werden, die Unternehmen

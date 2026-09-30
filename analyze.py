@@ -21,6 +21,15 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+# Windows-Konsolen (insb. cmd.exe mit älterer Codepage) können beim Ausgeben
+# von Umlauten sonst mit UnicodeEncodeError abbrechen. errors="replace" sorgt
+# dafür, dass die Analyse in jedem Fall weiterläuft (siehe README -> Windows).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 from logic.dirs21_detection import detect_dirs21
 from logic.excel_import import ExcelImportError, read_companies
 from logic.exporter import export_to_excel_file
