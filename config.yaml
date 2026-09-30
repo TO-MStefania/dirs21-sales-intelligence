@@ -1,10 +1,26 @@
 # DIRS21 Sales Intelligence - Konfiguration
 #
-# Passe diese Datei an deinen HubSpot-Account an, ohne Code ändern zu müssen.
+# Wird sowohl vom lokalen CLI-Tool (analyze.py, Excel-Import) als auch von
+# der optionalen Streamlit-Webapp (app.py, HubSpot-API) genutzt. Passe diese
+# Datei an deine Datenquelle an, ohne Code ändern zu müssen.
+
+excel:
+  # Mapping: fachlicher (interner) Name -> tatsächliche Spaltenüberschrift
+  # in deinem HubSpot-Excel-Export. Die exakten Spaltennamen können sich je
+  # nach Export unterscheiden - hier anpassen, nicht im Code.
+  columns:
+    hotel_name: Unternehmensname
+    website: Unternehmensdomain
+    ort: Ort
+    adressgruppe: Adressgruppe
+    dirs21_id: DIRS21-ID
+    # optional - falls in deinem Export nicht vorhanden, bleibt das Feld leer
+    record_id: Record ID
 
 hubspot:
   # Mapping: fachlicher (interner) Name -> tatsächlicher HubSpot-Property-Name
-  # der Company-Objekte in deinem Account.
+  # der Company-Objekte in deinem Account. Wird nur von der optionalen
+  # Streamlit-Webapp (app.py) verwendet.
   #
   # WICHTIG: "adressgruppe" und "dirs21_id" sind Platzhalter-Property-Namen.
   # Trage hier die echten internen Property-Namen aus deinem HubSpot-Account ein
@@ -16,27 +32,30 @@ hubspot:
     adressgruppe: adressgruppe
     dirs21_id: dirs21_id
 
-  # Bildet die rohen HubSpot-Werte der Adressgruppe auf die kanonischen
-  # Kategorien der Vertriebslogik ab. Passe die rechte Seite an, falls dein
-  # HubSpot-Dropdown andere Beschriftungen oder interne Werte verwendet.
-  adressgruppe_mapping:
-    kunde:
-      - "Kunde"
-    neukunde:
-      - "Neukunde"
-    akquise:
-      - "Akquise"
-    ehemaliger_kunde:
-      - "ehemaliger Kunde"
-      - "Ehemaliger Kunde"
-    interessent:
-      - "Interessent"
+# Bildet die rohen Adressgruppen-Werte (aus Excel oder HubSpot) auf die
+# kanonischen Kategorien der Vertriebslogik ab. Passe die rechte Seite an,
+# falls dein Export/HubSpot-Dropdown andere Beschriftungen verwendet.
+adressgruppe_mapping:
+  kunde:
+    - "Kunde"
+  neukunde:
+    - "Neukunde"
+  akquise:
+    - "Akquise"
+  ehemaliger_kunde:
+    - "ehemaliger Kunde"
+    - "Ehemaliger Kunde"
+  interessent:
+    - "Interessent"
 
 analysis:
-  # Standardwert für "Max. Anzahl Hotels analysieren" in der Oberfläche.
+  # Standardwert für "Max. Anzahl Hotels analysieren" in der Streamlit-App.
   max_hotels_default: 10
   # Timeout in Sekunden für HTTP-Requests beim Website-Crawling.
   request_timeout_seconds: 10
   # Maximale Anzahl Unterseiten pro Website, die zusätzlich zur Startseite
   # gecrawlt werden (Buchung, Gutschein, Tagung, Event, Datenschutz, ...).
   max_pages_per_website: 8
+  # analyze.py: nach wie vielen Unternehmen ein Zwischenstand der
+  # Ergebnis-Excel gespeichert wird.
+  save_interval: 5
