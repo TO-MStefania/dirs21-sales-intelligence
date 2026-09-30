@@ -209,6 +209,17 @@ v0.3 und wurde hier nur technisch umgesetzt, nicht neu erfunden:
   "nutzt DIRS21 nicht", sondern "keine öffentlich sichtbare DIRS21-Nutzung
   erkannt". Ein Fund nur in der Datenschutzbestimmung gilt explizit nur als
   möglicher Hinweis, nie als Bestätigung.
+- **Strikte Trennung von Funktion und DIRS21-Produkt:** Das Vorhandensein
+  einer Funktion (z.B. ein Gutscheinshop, buchbare Zusatzleistungen, ein
+  Tagungsangebot) beweist niemals, dass dafür DIRS21 verwendet wird. Ein
+  `dirs21_*_erkannt`-Flag wird nur bei technischem Nachweis (DIRS21/
+  TourOnline eindeutig in iFrame, Script oder Buchungslink, Erkennungs-
+  sicherheit "hoch") auf `true` gesetzt - "mittel"/"niedrig" bleiben immer
+  `false`. `dirs21_plus_erkannt` bleibt aktuell konservativ immer `false`,
+  da es kein öffentlich unterscheidbares technisches PLUS-Merkmal gibt.
+  Der DIRS21 Event-Assistent ist über die Website nicht zuverlässig
+  technisch erkennbar (reine Backend-Konfiguration) und wird deshalb nicht
+  als Produkt-Flag geführt, nur als `event_assistent_fit_score`.
 - Der **fachliche Modul-Fit** (0-100) bewertet ausschließlich, wie gut das
   Hotelangebot zum jeweiligen Modul passt - unabhängig von CRM-Status,
   DIRS21-ID oder öffentlicher DIRS21-Erkennung.

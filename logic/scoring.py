@@ -107,11 +107,19 @@ EVENT_ASSISTENT_FEATURES = {
     "Jubiläum": ["jubiläum", "jubilaeum"],
     "Familienfeier": ["familienfeier"],
     "Gruppenveranstaltung": ["gruppenveranstaltung", "gruppenreise"],
+    "Firmenveranstaltung": ["firmenveranstaltung", "firmenevent", "firmenfeier"],
     "Zimmerkontingent für Event": ["zimmerkontingent"],
     "Sonderkondition für Eventgäste": ["sonderkonditionen", "sonderkondition"],
     "Individuelle Event-Landingpage": ["eventseite", "event-landingpage", "hochzeitsseite", "feiern sie ihr fest"],
     "Personalisierte Buchungsmaske": ["persönliche buchungsmaske", "individuelle buchungsmaske"],
     "Tagung/Event mit Übernachtungsbedarf": ["übernachtung und tagung", "tagung mit übernachtung"],
+    # Zusätzliche Übernachtungs-/Zimmerbezug-Signale: erhöhen den Fit deutlich,
+    # da erst der Übernachtungsbezug den Event-Assistenten (statt PLUS/MICE)
+    # fachlich relevant macht (siehe Modul-Docstring/Abgrenzung).
+    "Übernachtung im Eventkontext": ["übernachtung", "übernachtungsmöglichkeit", "übernachtungsgäste"],
+    "Gästezimmer für Event": ["gästezimmer", "gaestezimmer"],
+    "Eventgäste": ["eventgäste", "eventgaeste"],
+    "Gruppenreservierung": ["gruppenreservierung", "gruppenbuchung"],
 }
 
 HOTELTYP_HINWEISE = {
@@ -193,11 +201,22 @@ def _score_event_assistent(text: str):
     if not matches:
         return 0, "Keine individuellen Event-Landingpages, Zimmerkontingente oder Sonderkonditionen für Eventgäste erkannt.", []
 
-    strong_signals = {"Zimmerkontingent für Event", "Sonderkondition für Eventgäste", "Individuelle Event-Landingpage", "Personalisierte Buchungsmaske"}
+    strong_signals = {
+        "Zimmerkontingent für Event", "Sonderkondition für Eventgäste",
+        "Individuelle Event-Landingpage", "Personalisierte Buchungsmaske",
+        "Tagung/Event mit Übernachtungsbedarf", "Übernachtung im Eventkontext",
+        "Gästezimmer für Event", "Eventgäste", "Gruppenreservierung",
+    }
     has_strong_signal = any(m in strong_signals for m in matches)
     base = 45 if has_strong_signal else 35
     score = _score_from_match_count(len(matches), base=base, step=15, cap=95)
-    begruendung = "Event-/Feieranlässe mit Übernachtungsbezug erkannt: " + ", ".join(matches) + "."
+    if has_strong_signal:
+        begruendung = "Event-/Feieranlässe mit erkennbarem Übernachtungsbezug: " + ", ".join(matches) + "."
+    else:
+        begruendung = (
+            "Event-/Feieranlässe erkannt, aber ohne erkennbaren Übernachtungsbezug (Zimmerkontingent, "
+            "Gästezimmer, Eventgäste o.ä.): " + ", ".join(matches) + "."
+        )
     return score, begruendung, matches
 
 

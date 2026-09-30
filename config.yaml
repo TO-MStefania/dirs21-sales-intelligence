@@ -48,6 +48,18 @@ adressgruppe_mapping:
   interessent:
     - "Interessent"
 
+dirs21_signatures:
+  # Zentrale, verifizierte DIRS21/TourOnline-Kennzeichen für die technische
+  # Produkterkennung (logic/dirs21_detection.py). Ein DIRS21-Produkt gilt nur
+  # als erkannt, wenn eines dieser Kennzeichen technisch eingebettet ist
+  # (iFrame-/Script-Quelle oder Buchungslink-Ziel) - eine bloße Erwähnung im
+  # sichtbaren Text reicht nicht aus. Bitte nur echte, verifizierte
+  # Kennzeichen eintragen, keine vermuteten/erfundenen Muster.
+  keywords:
+    - "dirs21"
+    - "touronline ag"
+    - "touronline"
+
 analysis:
   # Standardwert für "Max. Anzahl Hotels analysieren" in der Streamlit-App.
   max_hotels_default: 10

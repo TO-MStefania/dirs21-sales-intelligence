@@ -25,7 +25,7 @@ from logic.website_crawler import crawl_website
 RESULT_COLUMNS = [
     "hotel_name", "website", "ort", "adressgruppe", "dirs21_id",
     "crm_status", "dirs21_direktbuchung_erkannt", "dirs21_gutscheinshop_erkannt",
-    "dirs21_plus_erkannt", "dirs21_mice_erkannt", "dirs21_event_assistent_erkannt",
+    "dirs21_plus_erkannt", "dirs21_mice_erkannt",
     "dirs21_erkennungssicherheit", "statusklasse", "verkaufsmodus",
     "erkannter_hoteltyp", "gefundene_merkmale", "plus_fit_score",
     "gutscheinshop_fit_score", "mice_fit_score", "event_assistent_fit_score",
@@ -34,12 +34,16 @@ RESULT_COLUMNS = [
     "gesamtprioritaet", "pruefhinweis", "crawler_status", "analyse_datum",
 ]
 
+# Ab diesem fachlichen Fit-Score gilt eine Funktion (Gutschein/PLUS/MICE) als
+# "öffentlich vorhanden" für den Prüfhinweis-Abgleich weiter unten - entspricht
+# der unteren Grenze des Fit-Bands "mittel" (siehe logic/scoring.py -> fit_band).
+FUNKTIONS_HINWEIS_SCHWELLE = 40
+
 EMPTY_DETECTION = {
     "direktbuchung_erkannt": False,
     "gutscheinshop_erkannt": False,
     "plus_erkannt": False,
     "mice_erkannt": False,
-    "event_assistent_erkannt": False,
     "erkennungsquelle": "",
     "erkennungssicherheit": "",
     "hinweis": None,
@@ -63,6 +67,7 @@ def analyze_company(company: dict, config: dict) -> dict:
     analysis_cfg = config.get("analysis", {})
     max_pages = analysis_cfg.get("max_pages_per_website", 8)
     timeout = analysis_cfg.get("request_timeout_seconds", 10)
+    dirs21_keywords = (config.get("dirs21_signatures") or {}).get("keywords")
 
     row = {col: "" for col in RESULT_COLUMNS}
     pruefhinweise = []
@@ -102,7 +107,7 @@ def analyze_company(company: dict, config: dict) -> dict:
             detection = dict(EMPTY_DETECTION)
         else:
             try:
-                detection = detect_dirs21(crawl.pages)
+                detection = detect_dirs21(crawl.pages, dirs21_keywords=dirs21_keywords)
             except Exception as exc:
                 detection = dict(EMPTY_DETECTION)
                 pruefhinweise.append(f"DIRS21-Erkennung fehlgeschlagen: {exc}")
@@ -112,7 +117,6 @@ def analyze_company(company: dict, config: dict) -> dict:
     row["dirs21_gutscheinshop_erkannt"] = detection["gutscheinshop_erkannt"]
     row["dirs21_plus_erkannt"] = detection["plus_erkannt"]
     row["dirs21_mice_erkannt"] = detection["mice_erkannt"]
-    row["dirs21_event_assistent_erkannt"] = detection["event_assistent_erkannt"]
     row["dirs21_erkennungssicherheit"] = detection["erkennungssicherheit"]
     if detection.get("hinweis"):
         pruefhinweise.append(detection["hinweis"])
@@ -132,6 +136,16 @@ def analyze_company(company: dict, config: dict) -> dict:
     row["gutscheinshop_fit_score"] = scoring_result["gutscheinshop"]["score"]
     row["mice_fit_score"] = scoring_result["mice"]["score"]
     row["event_assistent_fit_score"] = scoring_result["event_assistent"]["score"]
+
+    # Funktion öffentlich vorhanden (fachlicher Fit-Score), aber technisch
+    # nicht eindeutig DIRS21 zugeordnet (Produkt-Flag bleibt false): kein
+    # False Positive, aber als Hinweis für die manuelle Prüfung festhalten.
+    if scoring_result["gutscheinshop"]["score"] >= FUNKTIONS_HINWEIS_SCHWELLE and not row["dirs21_gutscheinshop_erkannt"]:
+        pruefhinweise.append("Gutscheinshop-Funktion erkannt, technischer Anbieter nicht eindeutig als DIRS21 identifiziert.")
+    if scoring_result["plus"]["score"] >= FUNKTIONS_HINWEIS_SCHWELLE and not row["dirs21_plus_erkannt"]:
+        pruefhinweise.append("Buchbare Zusatzleistung(en) erkannt, technischer Anbieter nicht eindeutig als DIRS21 identifiziert.")
+    if scoring_result["mice"]["score"] >= FUNKTIONS_HINWEIS_SCHWELLE and not row["dirs21_mice_erkannt"]:
+        pruefhinweise.append("Tagungs-/MICE-Angebot erkannt, technischer Anbieter nicht eindeutig als DIRS21 identifiziert.")
 
     try:
         recommendation = build_recommendation(canonical, row, scoring_result)
