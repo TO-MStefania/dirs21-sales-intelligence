@@ -5,14 +5,17 @@ Vertriebschancen für DIRS21-Zusatzmodule (**PLUS**, **Gutscheinshop**,
 **MICE**, **Event-Assistent**) ermittelt - auf Basis der DIRS21 Sales
 Knowledge Base v0.3.
 
-Es gibt zwei Wege, die Unternehmensliste einzuspeisen:
+Es gibt zwei gleichwertige Wege, die Unternehmensliste einzuspeisen - beide
+lesen denselben HubSpot-Excel-Export und benötigen keine HubSpot-API-Anbindung:
 
-- **`analyze.py`** (primär, lokal) - liest einen HubSpot-Excel-Export ein.
-  Keine HubSpot-API-Anbindung nötig.
-- **`app.py`** (optional) - Streamlit-Webapp, die Unternehmen direkt über die
-  HubSpot-API aus einer HubSpot-Liste lädt.
+- **`analyze.py`** - lokales Kommandozeilen-Tool, Ergebnis als Excel-Datei
+  im `exports/`-Ordner.
+- **`app.py`** - Streamlit-Webapp mit Datei-Upload im Browser (lokal oder
+  über Streamlit Community Cloud deploybar), Ergebnis als Tabelle plus
+  Excel-Download.
 
-Beide nutzen dieselbe fachliche Logik in `logic/` und dieselbe `config.yaml`.
+Beide nutzen dieselbe Analyse-Pipeline (`logic/pipeline.py`) und damit
+dieselbe fachliche Logik in `logic/` sowie dieselbe `config.yaml`.
 
 ## Lokales CLI-Tool (analyze.py) - Schritt-für-Schritt-Anleitung
 
@@ -104,44 +107,74 @@ Hinweise für Windows:
 - Die virtuelle Umgebung muss in jeder neuen Terminal-Sitzung erneut mit
   `venv\Scripts\activate` aktiviert werden, bevor `analyze.py` läuft.
 
-## Optionale Streamlit-Webapp (app.py, HubSpot-API)
+## Streamlit-Webapp (app.py, Excel-Upload)
 
-Alternativ kann eine Streamlit-Oberfläche genutzt werden, die Unternehmen
-direkt aus einer HubSpot-Liste per API lädt (read-only, kein Excel-Export
-nötig):
+Browser-Oberfläche für dieselbe Analyse - ohne HubSpot-API, ohne Secrets.
+Die HubSpot-Excel-Datei wird direkt im Browser hochgeladen, nicht vorher in
+einen Ordner gelegt.
 
-1. `.streamlit/secrets.toml.example` nach `.streamlit/secrets.toml` kopieren
-   und dort einen HubSpot Private App Token (Scope
-   `crm.objects.companies.read`) eintragen, oder als Umgebungsvariable
-   `HUBSPOT_PRIVATE_APP_TOKEN` setzen. Der Token wird niemals im Code
-   gespeichert.
-2. `config.yaml` -> Abschnitt `hubspot.properties` auf die internen
-   HubSpot-Property-Namen deines Accounts anpassen.
-3. Starten:
+1. Lokal starten:
    ```bash
+   pip install -r requirements.txt
    streamlit run app.py
    ```
-4. HubSpot Listen-ID eingeben und "Analyse starten" klicken.
+2. Im Browser die HubSpot-Excel-Datei (.xlsx) über den Datei-Upload
+   auswählen.
+3. Die App zeigt danach die Anzahl erkannter Unternehmen, die Anzahl mit
+   hinterlegter Website/Domain sowie eine kleine Vorschau der importierten
+   Daten.
+4. Maximale Anzahl zu analysierender Unternehmen wählen (5, 10, 20, 50 oder
+   Alle - Standard: 5) und auf **"Analyse starten"** klicken.
+5. Ein Fortschrittsbalken zeigt den Analysefortschritt
+   (`12 / 66 - Hotel XY wird analysiert`); Fehler bei einzelnen Websites
+   brechen die Analyse nicht ab, sondern werden in `crawler_status` bzw.
+   `pruefhinweis` dokumentiert.
+6. Nach Abschluss erscheint die Ergebnistabelle sowie der Button
+   **"Ergebnis als Excel herunterladen"**.
+
+## Deployment auf Streamlit Community Cloud
+
+1. Repository (mit diesem Stand) auf GitHub bereitstellen - `app.py` ist der
+   Einstiegspunkt.
+2. Auf [streamlit.io/cloud](https://streamlit.io/cloud) mit GitHub-Account
+   anmelden und **"New app"** wählen.
+3. Repository, Branch (z.B. `main`) und als **Main file path** `app.py`
+   auswählen.
+4. **Deploy** klicken - `requirements.txt` wird automatisch von Streamlit
+   Cloud installiert, keine weitere Konfiguration nötig.
+5. Es müssen **keine Secrets hinterlegt werden** - die Webapp benötigt
+   keinen HubSpot-Token und keine sonstigen Zugangsdaten, sie arbeitet
+   ausschließlich mit der im Browser hochgeladenen Excel-Datei.
+6. Nach dem Deploy im Browser die App-URL öffnen, Excel-Datei hochladen und
+   wie oben beschrieben analysieren.
+
+Hinweis: Jede Analyse läuft nur für die Dauer der Browser-Sitzung -
+hochgeladene Dateien und Ergebnisse werden nicht dauerhaft auf dem Server
+gespeichert. Für eine sehr große Anzahl Unternehmen (z.B. alle 66) kann die
+Analyse einige Minuten dauern, da für jedes Unternehmen die Website live
+abgerufen wird.
 
 ## Projektstruktur
 
 ```
 analyze.py                      Lokales CLI-Tool: Excel-Import -> Analyse -> Excel-Export
-app.py                           Optionale Streamlit-Oberfläche (HubSpot-API)
-config.yaml                      Spalten-/Property-Mapping & Analyse-Einstellungen
+app.py                           Streamlit-Webapp: Excel-Upload -> Analyse -> Tabelle + Excel-Download
+config.yaml                      Spalten-Mapping & Analyse-Einstellungen
 requirements.txt
-.streamlit/secrets.toml.example  Beispiel für Secrets (nur für app.py)
+.streamlit/secrets.toml.example  Beispiel-Datei, aktuell ungenutzt (app.py braucht keine Secrets)
 logic/
   excel_import.py                 Liest HubSpot-Excel-Exporte gemäß config.yaml ein
-  hubspot_client.py                HubSpot API Zugriff (read-only, nur für app.py)
+  pipeline.py                      Gemeinsame Analyse-Pipeline (von analyze.py und app.py genutzt)
   website_crawler.py               Öffentliches Crawling der Hotel-Website
   dirs21_detection.py              Erkennung öffentlicher DIRS21-Nutzungs-Hinweise
   status_detection.py              Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
   scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
   recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung
   exporter.py                      Excel-Export
-data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert)
-exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert)
+  hubspot_client.py                 HubSpot-API-Zugriff (read-only) - aktuell von keinem Einstiegspunkt
+                                     genutzt, bleibt für eine mögliche spätere HubSpot-Anbindung erhalten
+data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert, nur für analyze.py)
+exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert, nur für analyze.py)
 ```
 
 ## Excel-Import (analyze.py)
@@ -187,12 +220,11 @@ Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
 
 ## Datenschutz & Sicherheit
 
-- `analyze.py` benötigt keinen HubSpot-Zugriff - es liest nur die lokale
+- Weder `analyze.py` noch `app.py` benötigen HubSpot-Zugriff oder Secrets -
+  beide lesen ausschließlich die (lokal übergebene bzw. hochgeladene)
   Excel-Datei und öffentlich erreichbare Websites.
-- Die optionale HubSpot-API-Anbindung (`app.py`) hat keinen Schreibzugriff
-  auf HubSpot, nur lesenden Zugriff, und ruft keine Kontakte, E-Mails oder
-  Telefonnummern ab.
-- Der HubSpot Token wird niemals im Code gespeichert.
+- `app.py` verarbeitet die hochgeladene Datei nur im Speicher der jeweiligen
+  Browser-Sitzung, keine dauerhafte Ablage auf dem Server.
 - `.gitignore` schließt `.env`, `.streamlit/secrets.toml`, Eingabe-Excel-
   Dateien in `data/`, generierte Exporte in `exports/` und temporäre Dateien
   von der Versionierung aus.
