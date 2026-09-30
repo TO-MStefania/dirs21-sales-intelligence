@@ -75,23 +75,32 @@ GUTSCHEIN_POTENTIAL_FEATURES = {
 # MICE: Tagungen / Konferenzen / Business-Veranstaltungen
 # ---------------------------------------------------------------------------
 MICE_CORE_FEATURES = {
+    # Nur eindeutige, unmissverständlich tagungs-/konferenzbezogene
+    # Bezeichnungen zählen als CORE (= "sichtbare Tagungs-, Konferenz- oder
+    # Veranstaltungsinfrastruktur"). Allgemeine Begriffe wie "Raumkapazität"
+    # oder "Bestuhlung" gehören bewusst NICHT hierher - sie können sich
+    # genauso gut auf ein Restaurant oder ein Zimmer beziehen und beweisen
+    # für sich genommen keine MICE-Infrastruktur (siehe MICE_SUPPORTING_FEATURES).
     "Tagungsraum": ["tagungsraum", "tagungsräume", "tagungsraeume"],
     "Konferenzraum": ["konferenzraum", "konferenzräume", "konferenzraeume"],
     "Seminarraum": ["seminarraum", "seminarräume", "seminarraeume"],
     "Meetingraum": ["meetingraum", "meeting room", "meetingräume"],
     "Veranstaltungsraum": ["veranstaltungsraum", "veranstaltungsräume"],
-    "Raumkapazität": ["raumkapazität", "raumkapazitaet", "personen theaterbestuhlung"],
-    "Bestuhlungsvariante": ["bestuhlung", "bestuhlungsvariante"],
     "Tagungspauschale": ["tagungspauschale", "tagespauschale"],
 }
 
 MICE_SUPPORTING_FEATURES = {
+    # Dürfen den Fit nur ERGÄNZEND erhöhen, wenn bereits echte MICE_CORE_FEATURES
+    # vorhanden sind - für sich allein (ohne Tagungs-/Konferenz-/Veranstaltungs-
+    # raum) bleibt der Fit auf maximal 20 gedeckelt (siehe _score_mice).
     "Tagungstechnik": ["tagungstechnik", "beamer", "konferenztechnik"],
     "Catering für Meetings": ["catering"],
     "Firmenveranstaltung": ["firmenveranstaltung", "firmenevent"],
     "Businessgäste": ["businessgäste", "business-gäste", "geschäftsreisende"],
     "Raum-/Zeitslotbuchung": ["raum buchen", "tagungsraum buchen", "zeitslot"],
     "Teilnehmerzimmer im Tagungskontext": ["übernachtung inklusive tagung", "teilnehmerzimmer"],
+    "Raumkapazität": ["raumkapazität", "raumkapazitaet", "personen theaterbestuhlung"],
+    "Bestuhlungsvariante": ["bestuhlung", "bestuhlungsvariante"],
 }
 
 MICE_EXCLUSION_HINTS = [
