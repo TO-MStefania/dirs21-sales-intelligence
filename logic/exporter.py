@@ -163,3 +163,83 @@ def export_to_excel_file(df: pd.DataFrame, path: str) -> str:
     with open(path, "wb") as f:
         f.write(export_to_excel_bytes(df))
     return path
+
+
+# ---------------------------------------------------------------------------
+# Mehrblatt-Export für die Routenplanung (siehe Auftrag "eine Excel-Datei,
+# mehrere Tabellenblätter"). Verändert export_to_excel_bytes() oben an keiner
+# Stelle - bestehende Aufrufer (analyze.py, der Sales-Intelligence-Download
+# in app.py) bleiben unangetastet.
+# ---------------------------------------------------------------------------
+ROUTE_INPUT_SHEET_NAME = "Routenplanung"
+ROUTE_ERGEBNIS_SHEET_NAME = "Routen-Ergebnis"
+ROUTE_ERGEBNIS_PRIORITAET_COLUMN = "Gesamtpriorität"
+
+
+def _format_simple_sheet(worksheet, df: pd.DataFrame, prioritaet_column: str = None) -> None:
+    """Leichte Formatierung (fette Kopfzeile, AutoFilter, fixierte erste
+    Zeile, sinnvolle Spaltenbreiten) ohne die Ampelfarben des Sales-
+    Intelligence-Blatts - für das unveränderte Routenplanung-Eingabeblatt
+    (siehe Auftrag Abschnitt 24: "Routenplanung-Sheet nicht überschreiben").
+    Optional mit Gesamtpriorität-Ampel für das Routen-Ergebnis-Blatt."""
+    columns = list(df.columns)
+    column_letters = {column: get_column_letter(idx + 1) for idx, column in enumerate(columns)}
+
+    for cell in worksheet[1]:
+        cell.font = HEADER_FONT
+        cell.alignment = UNIFORM_ALIGNMENT
+
+    if prioritaet_column and prioritaet_column in columns:
+        letter = column_letters[prioritaet_column]
+        for row_idx in range(2, worksheet.max_row + 1):
+            cell = worksheet[f"{letter}{row_idx}"]
+            style = GESAMTPRIORITAET_STYLES.get(str(cell.value).strip())
+            if style:
+                fill_color, font_color = style
+                cell.fill = PatternFill("solid", fgColor=fill_color)
+                cell.font = Font(bold=True, color=font_color)
+
+    _apply_column_widths(worksheet, columns, column_letters)
+    worksheet.auto_filter.ref = worksheet.dimensions
+    worksheet.freeze_panes = "A2"
+
+
+def export_workbook_bytes(
+    sales_df: pd.DataFrame,
+    route_input_df: pd.DataFrame = None,
+    route_ergebnis_df: pd.DataFrame = None,
+    sales_sheet_name: str = SHEET_NAME,
+    route_input_sheet_name: str = ROUTE_INPUT_SHEET_NAME,
+    route_ergebnis_sheet_name: str = ROUTE_ERGEBNIS_SHEET_NAME,
+) -> bytes:
+    """
+    Erzeugt EINE Excel-Datei mit bis zu drei Tabellenblättern:
+    1. Sales Intelligence (identisch zu export_to_excel_bytes, dieselbe
+       Ampelformatierung) - wird NICHT um Routenplanungsfelder erweitert.
+    2. Routenplanung (optional, route_input_df) - unverändertes
+       Eingabeblatt, nur Kopfzeile/Spaltenbreiten formatiert (siehe Auftrag
+       Abschnitt 24 - "Routenplanung-Sheet nicht überschreiben").
+    3. Routen-Ergebnis (optional, route_ergebnis_df) - berechnete Tagesroute
+       mit Gesamtpriorität-Ampel.
+
+    route_input_df/route_ergebnis_df dürfen None oder leer sein (z.B. wenn
+    noch keine Routenplanung-Daten vorhanden sind) - dann wird nur das
+    Sales-Intelligence-Blatt geschrieben.
+    """
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        sales_df.to_excel(writer, index=False, sheet_name=sales_sheet_name)
+        _format_workbook(writer.sheets[sales_sheet_name], sales_df)
+
+        if route_input_df is not None and not route_input_df.empty:
+            route_input_df.to_excel(writer, index=False, sheet_name=route_input_sheet_name)
+            _format_simple_sheet(writer.sheets[route_input_sheet_name], route_input_df)
+
+        if route_ergebnis_df is not None and not route_ergebnis_df.empty:
+            route_ergebnis_df.to_excel(writer, index=False, sheet_name=route_ergebnis_sheet_name)
+            _format_simple_sheet(
+                writer.sheets[route_ergebnis_sheet_name], route_ergebnis_df,
+                prioritaet_column=ROUTE_ERGEBNIS_PRIORITAET_COLUMN,
+            )
+    buffer.seek(0)
+    return buffer.getvalue()
