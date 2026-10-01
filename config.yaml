@@ -5,6 +5,12 @@
 # Datei an deine Datenquelle an, ohne Code ändern zu müssen.
 
 excel:
+  # Name des Tabellenblatts mit den Sales-Intelligence-Daten (siehe Auftrag
+  # "eine Excel-Datei, mehrere Tabellenblätter"). Optional: existiert kein
+  # Blatt mit diesem Namen (z.B. bei einer einfachen, einblättrigen
+  # Bestandsdatei), wird automatisch das erste Tabellenblatt verwendet - das
+  # bleibt vollständig rückwärtskompatibel.
+  sheet_name: "Sales Intelligence"
   # Mapping: fachlicher (interner) Name -> tatsächliche Spaltenüberschrift
   # in deinem HubSpot-Excel-Export. Die exakten Spaltennamen können sich je
   # nach Export unterscheiden - hier anpassen, nicht im Code.
@@ -75,3 +81,49 @@ analysis:
   # analyze.py: nach wie vielen Unternehmen ein Zwischenstand der
   # Ergebnis-Excel gespeichert wird.
   save_interval: 5
+
+# Routenplanung (eigener Webapp-Reiter, siehe logic/route_planner.py).
+# Liest ein zusätzliches Tabellenblatt derselben Excel-Datei ein - die
+# Sales-Intelligence-Logik (Scoring, Produkterkennung, CRM-Status, Export)
+# bleibt davon vollständig unberührt.
+routenplanung:
+  excel:
+    # Name des Eingabe-Tabellenblatts mit den Terminen. Fehlt dieses Blatt,
+    # wird der Reiter "Routenplanung" leer angezeigt, ohne die App zum
+    # Absturz zu bringen.
+    sheet_name: "Routenplanung"
+    # Mapping: fachlicher (interner) Name -> Spaltenüberschrift im
+    # Routenplanung-Tabellenblatt.
+    columns:
+      hotel_name: Unternehmensname
+      dirs21_id: DIRS21-ID
+      strasse: Straße
+      plz: PLZ
+      ort: Ort
+      termin_datum: Termin_Datum
+      termin_uhrzeit: Termin_Uhrzeit
+      termin_bis: Termin_bis
+      termin_status: Termin_Status
+      flexibel_von: Flexibel_von
+      flexibel_bis: Flexibel_bis
+      termin_dauer_minuten: Termin_Dauer_Minuten
+      prioritaet: Priorität
+      bemerkung: Bemerkung
+  # Name des beim Export zusätzlich erzeugten Ergebnis-Tabellenblatts (siehe
+  # logic/exporter.py -> export_workbook_bytes). Das Eingabeblatt
+  # "Routenplanung" wird dabei nie überschrieben.
+  ergebnis_sheet_name: "Routen-Ergebnis"
+  # Zentral konfigurierbarer Standardwert für Termin_Dauer_Minuten, falls in
+  # der Excel-Zeile nicht angegeben (siehe Auftrag Abschnitt 5).
+  standard_termin_dauer_minuten: 60
+  # Zentral konfigurierbarer Sicherheits-/Parkpuffer in Minuten, der bei der
+  # Machbarkeitsprüfung zwischen zwei Terminen zusätzlich zur reinen Fahrzeit
+  # berücksichtigt wird (siehe Auftrag Abschnitt 11) - bewusst nur hier
+  # definiert, nicht an mehreren Stellen im Code verteilt.
+  fahrzeitpuffer_minuten: 15
+  # "Passende Unternehmen entlang der Route" (siehe Auftrag Abschnitt 20):
+  # maximale Abweichung (Luftlinie, km) zu einem Tourstopp, damit ein
+  # Unternehmen überhaupt als Vorschlag infrage kommt.
+  max_abweichung_km_fuer_vorschlaege: 15
+  # Maximale Anzahl Vorschläge, die im Reiter angezeigt werden.
+  max_vorschlaege: 10

@@ -1,28 +1,56 @@
 """
 DIRS21 Sales Intelligence - Streamlit-Webapp (Excel-Upload).
 
-Lädt einen HubSpot-Excel-Export im Browser hoch, analysiert die öffentlichen
-Websites der enthaltenen Unternehmen und zeigt Vertriebschancen für
-DIRS21-Zusatzmodule (PLUS, Gutscheinshop, MICE, Event-Assistent) gemäß der
+Lädt eine Excel-Datei im Browser hoch, analysiert die öffentlichen Websites
+der enthaltenen Unternehmen und zeigt Vertriebschancen für DIRS21-Zusatz-
+module (PLUS, Gutscheinshop, MICE, Event-Assistent, Insights) gemäß der
 DIRS21 Sales Knowledge Base v0.3. Arbeitet ausschließlich mit der
 hochgeladenen Excel-Datei - keine HubSpot-API-Anbindung, keine Secrets nötig.
 Nutzt dieselbe Analyse-Pipeline wie das lokale CLI-Tool (analyze.py).
+
+Zwei Hauptreiter (siehe Auftrag "Routenplanung"):
+1. Sales Intelligence - die bestehende, unveränderte Analyse.
+2. Routenplanung - eigenständiger Funktionsbereich für die Tourenplanung
+   vereinbarter Vor-Ort-Termine (siehe logic/route_planner.py). Liest
+   lesend aus denselben Sales-Intelligence-Analyseergebnissen (Ranking von
+   Zusatzvorschlägen), verändert dort aber nichts.
 
 Dieses Modul ist reine Präsentations-/Bedienschicht: Design, Layout, Filter,
 Sortierung und Fortschrittsanzeige. Die fachliche Vertriebs-, Scoring- und
 DIRS21-Erkennungslogik liegt unverändert in logic/ (siehe dort).
 """
 
-from datetime import datetime
+import datetime as dt
+import io
 
 import pandas as pd
 import streamlit as st
 import yaml
 
 from logic.excel_import import ExcelImportError, read_companies
-from logic.exporter import FIT_BAND_STYLES, GESAMTPRIORITAET_STYLES, export_to_excel_bytes
+from logic.exporter import (
+    FIT_BAND_STYLES,
+    GESAMTPRIORITAET_STYLES,
+    export_to_excel_bytes,
+    export_workbook_bytes,
+)
 from logic.pipeline import FIT_BEGRUENDUNG_COLUMNS, RESULT_COLUMNS, analyze_company
 from logic.scoring import fit_band
+from logic import geocoding as geocoding_module
+from logic import routing_provider
+from logic.route_import import RouteImportError, read_route_termine
+from logic.route_planner import (
+    available_dates,
+    compare_routes,
+    compute_route,
+    enrich_stops_with_sales_intelligence,
+    filter_termine_by_date,
+    get_fahrzeitpuffer_minuten,
+    get_standard_dauer_minuten,
+    rank_nearby_companies,
+)
+
+datetime = dt.datetime
 
 # Alle Spalten, die die Webapp intern vorhält - RESULT_COLUMNS (Excel-Export/
 # CLI-identisch) plus die kurzen Fit-Begründungen je Produkt, die NUR in der
@@ -523,37 +551,22 @@ def render_detail(original_index: int, row: pd.Series, config: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hauptablauf
+# Reiter 1: Sales Intelligence (bestehende Funktion, unverändert)
 # ---------------------------------------------------------------------------
-def main():
-    st.markdown(DESIGN_CSS, unsafe_allow_html=True)
-    st.markdown(
-        '<div class="d21-hero"><h1>DIRS21 Sales Intelligence</h1>'
-        '<p>Vertriebspotenziale erkennen. Prioritäten setzen.</p></div>',
-        unsafe_allow_html=True,
-    )
-
-    try:
-        config = load_config()
-    except Exception as exc:
-        st.error(f"`config.yaml` konnte nicht geladen werden: {exc}")
-        st.stop()
-
-    # --- Upload / Analyse -------------------------------------------------
-    st.markdown('<div class="d21-section-title">1. HubSpot-Excel hochladen</div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("HubSpot-Excel-Datei hochladen", type=["xlsx"], label_visibility="collapsed")
+def render_sales_intelligence_tab(config: dict, uploaded_file) -> None:
     if not uploaded_file:
+        st.info("Bitte oben eine Excel-Datei hochladen, um die Sales-Intelligence-Analyse zu starten.")
         return
 
     try:
         companies = read_companies(uploaded_file, config)
     except ExcelImportError as exc:
         st.error(f"Fehler beim Excel-Import: {exc}")
-        st.stop()
+        return
 
     if not companies:
         st.warning("Keine Unternehmen in der Excel-Datei gefunden.")
-        st.stop()
+        return
 
     total_companies = len(companies)
     with_website = sum(1 for c in companies if c.get("website"))
@@ -663,6 +676,355 @@ def main():
             "Zusatzinformationen ohne Einfluss auf Scoring oder Priorität."
         )
         st.dataframe(full_df[RESULT_COLUMNS], width="stretch")
+
+
+# ---------------------------------------------------------------------------
+# Reiter 2: Routenplanung (siehe logic/route_planner.py, logic/geocoding.py,
+# logic/routing_provider.py, logic/route_import.py). Eigenständiger
+# Funktionsbereich - liest Sales-Intelligence-Analyseergebnisse (sofern im
+# Reiter 1 bereits analysiert) nur LESEND für Zusatzvorschläge, verändert
+# dort nichts.
+# ---------------------------------------------------------------------------
+ENDE_MODUS_OPTIONEN = {
+    "Letzter Termin": "letzter_termin",
+    "Rückkehr zur Startadresse": "start_adresse",
+    "Eigene Endadresse": "eigene_adresse",
+}
+
+ROUTE_TERMIN_STATUS_LABELS = {"fix": "fix", "flexibel": "flexibel", "": "Standard"}
+
+
+def _format_zeit(value) -> str:
+    return value.strftime("%H:%M") if value else "–"
+
+
+def _render_route_kpis(route: dict) -> None:
+    kpis = [
+        ("Anzahl Termine", f"{route['anzahl_termine']}"),
+        ("Gesamtstrecke", f"{route['gesamt_strecke_km']:.0f} km" if route["routing_verfuegbar"] else "–"),
+        ("Gesamte Fahrzeit", f"{route['gesamt_fahrzeit_min']:.0f} min" if route["routing_verfuegbar"] else "–"),
+        ("Gesamte Terminzeit", f"{route['gesamt_terminzeit_min']:.0f} min"),
+        ("Geschätzte Tourdauer", f"{route['geschaetzte_tourdauer_min']:.0f} min"),
+        ("Startzeit", _format_zeit(route["start_zeit"])),
+        ("Endzeit", _format_zeit(route["end_zeit"])),
+        ("Kritische Übergänge", f"{route['anzahl_kritisch']}"),
+    ]
+    cols = st.columns(len(kpis))
+    for col, (label, value) in zip(cols, kpis):
+        with col:
+            with st.container(border=True):
+                st.caption(label)
+                st.markdown(f"### {value}")
+
+
+def _render_route_vergleich(aktuell: dict, optimiert: dict) -> None:
+    vergleich = compare_routes(aktuell, optimiert)
+    if not aktuell["routing_verfuegbar"]:
+        return
+    st.markdown('<div class="d21-section-title">Aktuelle vs. optimierte Route</div>', unsafe_allow_html=True)
+    if not vergleich["gibt_es_ersparnis"]:
+        st.caption(
+            "Keine relevante Optimierung möglich - die aktuelle Reihenfolge der flexiblen Termine ist "
+            "bereits sinnvoll bzw. durch fixe Termine/Zeitfenster festgelegt."
+        )
+        return
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Aktuelle Fahrzeit", f"{vergleich['aktuelle_fahrzeit_min']:.0f} min")
+    c2.metric(
+        "Optimierte Fahrzeit", f"{vergleich['optimierte_fahrzeit_min']:.0f} min",
+        delta=f"-{vergleich['ersparnis_fahrzeit_min']:.0f} min",
+    )
+    c3.metric("Ersparnis Strecke", f"{vergleich['ersparnis_strecke_km']:.0f} km")
+
+
+def _render_route_timeline(route: dict) -> None:
+    st.markdown('<div class="d21-section-title">Tagesroute</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="d21-detail-value"><b>{_format_zeit(route["start_zeit"])}</b> — Start: {route["start_adresse"] or "(keine Adresse)"}</div>',
+        unsafe_allow_html=True,
+    )
+
+    for stop in route["stops"]:
+        if stop["fahrzeit_min_vom_vorherigen"] is not None:
+            st.caption(
+                f"↓ Fahrt zum nächsten Termin: {stop['fahrzeit_min_vom_vorherigen']:.0f} min / "
+                f"{stop['distanz_km_vom_vorherigen']:.0f} km"
+            )
+        elif route["routing_verfuegbar"]:
+            st.caption("↓ Fahrzeit zu diesem Termin nicht ermittelbar (Adresse nicht geocodierbar).")
+
+        status = stop.get("termin_status", "")
+        status_label = ROUTE_TERMIN_STATUS_LABELS.get(status, status)
+        header = (
+            f"{_format_zeit(stop['termin_beginn'])}–{_format_zeit(stop['termin_ende'])} · "
+            f"{stop['hotel_name']} — {stop['ort']}"
+        )
+        with st.container(border=True):
+            cols = st.columns([3, 1])
+            with cols[0]:
+                st.markdown(f"**{header}**")
+                st.caption(f"{stop['adresse_vollstaendig'] or '(unvollständige Adresse)'}")
+                badges = [
+                    _badge_html(f"Status: {status_label}", "FFEEF1F5", "FF5B6472"),
+                ]
+                if stop.get("prioritaet"):
+                    style = GESAMTPRIORITAET_STYLES.get(stop["prioritaet"], (NEUTRAL_BADGE_BG, NEUTRAL_BADGE_FG))
+                    badges.append(_badge_html(f"Priorität {stop['prioritaet']}", *style))
+                sales_match = stop.get("sales_match")
+                if sales_match and sales_match.get("fachliche_top_empfehlung"):
+                    badges.append(_badge_html(
+                        f"Top-Empfehlung: {sales_match['fachliche_top_empfehlung']}", "FFEEF1F5", "FF5B6472",
+                    ))
+                if stop.get("dirs21_id"):
+                    badges.append(_badge_html(f"DIRS21-ID {stop['dirs21_id']}", "FFEEF1F5", "FF5B6472"))
+                st.markdown(" ".join(badges), unsafe_allow_html=True)
+                if stop.get("geplante_ankunft"):
+                    st.caption(f"Geplante Ankunft: {_format_zeit(stop['geplante_ankunft'])}")
+                if stop.get("bemerkung"):
+                    st.caption(f"Bemerkung: {stop['bemerkung']}")
+                for hinweis in stop.get("pruefhinweise", []):
+                    st.warning(hinweis, icon="⚠️")
+            with cols[1]:
+                if stop["kritisch"]:
+                    st.error(stop["kritisch_hinweis"] or "Terminfolge zeitlich kritisch.", icon="🚨")
+
+
+def _render_route_karte(route: dict) -> None:
+    punkte = []
+    if route["start_coord"]:
+        punkte.append({"lat": route["start_coord"][0], "lon": route["start_coord"][1]})
+    for stop in route["stops"]:
+        if stop["lat"] is not None:
+            punkte.append({"lat": stop["lat"], "lon": stop["lon"]})
+    if not punkte:
+        return
+    st.markdown('<div class="d21-section-title">Karte</div>', unsafe_allow_html=True)
+    st.map(pd.DataFrame(punkte), latitude="lat", longitude="lon", size=40)
+
+
+def _render_nearby_vorschlaege(route: dict, termine_tag: list, config: dict, geocode_cache: dict) -> None:
+    sales_rows = st.session_state.get("result_rows")
+    if not sales_rows:
+        st.caption(
+            "Für Vorschläge zu passenden Unternehmen entlang der Route zuerst im Reiter "
+            "\"Sales Intelligence\" eine Analyse durchführen."
+        )
+        return
+
+    vorschlaege = rank_nearby_companies(
+        route["stops"], sales_rows, termine_tag, config,
+        geocode_fn=geocoding_module.geocode, geocode_cache=geocode_cache,
+    )
+    if not vorschlaege:
+        st.caption("Keine passenden Unternehmen ohne Termin in der Nähe der Route gefunden.")
+        return
+
+    st.caption(
+        "Reine Vorschläge - es wird NICHT automatisch ein Termin vereinbart. Sortiert nach "
+        "Gesamtpriorität, dann nach Nähe zur Route."
+    )
+    for v in vorschlaege:
+        style = GESAMTPRIORITAET_STYLES.get(v["gesamtprioritaet"], (NEUTRAL_BADGE_BG, NEUTRAL_BADGE_FG))
+        badges = [_badge_html(f"{v['abweichung_km']:.0f} km Abweichung", "FFEEF1F5", "FF5B6472")]
+        if v["gesamtprioritaet"]:
+            badges.append(_badge_html(f"Priorität {v['gesamtprioritaet']}", *style))
+        if v["fachliche_top_empfehlung"]:
+            badges.append(_badge_html(
+                f"{v['fachliche_top_empfehlung']} Fit {v['fachliche_top_empfehlung_score']}", "FFEEF1F5", "FF5B6472",
+            ))
+        st.markdown(f"**{v['hotel_name']}** — {v['ort']}", unsafe_allow_html=False)
+        st.markdown(" ".join(badges), unsafe_allow_html=True)
+
+
+def _route_ergebnis_dataframe(route: dict) -> pd.DataFrame:
+    """Baut die "Routen-Ergebnis"-Tabelle gemäß Auftrag Abschnitt 23 -
+    unabhängig von den internen (deutsch/englisch gemischten) Feldnamen in
+    logic/route_planner.py."""
+    rows = []
+    for idx, stop in enumerate(route["stops"], start=1):
+        rows.append({
+            "Reihenfolge": idx,
+            "Geplante_Ankunft": _format_zeit(stop["geplante_ankunft"]),
+            "Termin_Uhrzeit": _format_zeit(stop["termin_beginn"]),
+            "Termin_bis": _format_zeit(stop["termin_ende"]),
+            "Unternehmensname": stop["hotel_name"],
+            "DIRS21-ID": stop["dirs21_id"],
+            "Straße": stop["strasse"],
+            "PLZ": stop["plz"],
+            "Ort": stop["ort"],
+            "Termin_Status": stop["termin_status"] or "standard",
+            "Termin_Dauer_Minuten": stop.get("termin_dauer_minuten") or "",
+            "Fahrzeit_vom_Vortermin_Minuten": (
+                round(stop["fahrzeit_min_vom_vorherigen"]) if stop["fahrzeit_min_vom_vorherigen"] is not None else ""
+            ),
+            "Entfernung_vom_Vortermin_km": (
+                round(stop["distanz_km_vom_vorherigen"], 1) if stop["distanz_km_vom_vorherigen"] is not None else ""
+            ),
+            "Gesamtpriorität": stop.get("prioritaet", ""),
+            "Fachliche_Top_Empfehlung": (stop.get("sales_match") or {}).get("fachliche_top_empfehlung", ""),
+            "Hinweis": " | ".join(([stop["kritisch_hinweis"]] if stop["kritisch"] else []) + stop.get("pruefhinweise", [])),
+        })
+    return pd.DataFrame(rows)
+
+
+def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
+    """uploaded_bytes: Rohbytes der hochgeladenen Excel-Datei (siehe main()) -
+    wird für jeden unabhängigen Lesevorgang frisch in io.BytesIO gepackt,
+    da ein einzelnes Datei-/Stream-Objekt kein zweites Mal gelesen werden
+    könnte (diese Funktion liest die Datei an zwei Stellen: Termine + später
+    das unveränderte Routenplanung-Blatt für den Export)."""
+    if not uploaded_bytes:
+        st.info("Bitte oben eine Excel-Datei hochladen (Tabellenblatt \"Routenplanung\", siehe README).")
+        return
+
+    try:
+        alle_termine = read_route_termine(io.BytesIO(uploaded_bytes), config)
+    except RouteImportError as exc:
+        st.error(f"Fehler beim Einlesen des Tabellenblatts \"Routenplanung\": {exc}")
+        return
+
+    if not alle_termine:
+        st.info(
+            "Kein Tabellenblatt \"Routenplanung\" mit Terminen in dieser Datei gefunden. "
+            "Lege ein Tabellenblatt mit diesem Namen an (siehe README) und lade die Datei erneut hoch."
+        )
+        return
+
+    if not routing_provider.is_configured():
+        st.warning(
+            "Keine Routing-API konfiguriert (Secret/Umgebungsvariable `ROUTING_API_KEY`). "
+            "Die Termine werden trotzdem chronologisch angezeigt, aber ohne echte Fahrzeiten/Distanzen - "
+            "es werden keine Fahrzeiten geschätzt oder erfunden.",
+            icon="ℹ️",
+        )
+
+    daten = available_dates(alle_termine)
+    if not daten:
+        st.warning("Keine Termine mit gültigem Termin_Datum gefunden.")
+        return
+
+    col_datum, col_start, col_zeit = st.columns([1, 2, 1])
+    gewaehltes_datum = col_datum.selectbox("Datum", daten, format_func=lambda d: d.strftime("%d.%m.%Y"))
+    start_adresse = col_start.text_input("Startadresse", placeholder="z.B. Büro, Wohnort oder beliebige Adresse")
+    start_zeit = col_zeit.time_input("Startzeit", value=dt.time(8, 0))
+
+    ende_label = st.radio("Tourende", list(ENDE_MODUS_OPTIONEN.keys()), horizontal=True)
+    ende_modus = ENDE_MODUS_OPTIONEN[ende_label]
+    ende_adresse = None
+    if ende_modus == "eigene_adresse":
+        ende_adresse = st.text_input("Endadresse")
+
+    termine_tag = filter_termine_by_date(alle_termine, gewaehltes_datum)
+    st.caption(f"{len(termine_tag)} Termin(e) am {gewaehltes_datum.strftime('%d.%m.%Y')}")
+    if not termine_tag:
+        return
+
+    unvollstaendig = [t for t in termine_tag if t.get("pruefhinweis_import")]
+    if unvollstaendig:
+        with st.expander(f"{len(unvollstaendig)} Termin(e) mit Prüfhinweis beim Import", expanded=False):
+            for t in unvollstaendig:
+                st.warning(f"{t.get('hotel_name') or '(ohne Namen)'}: {t['pruefhinweis_import']}", icon="⚠️")
+
+    if not start_adresse:
+        st.info("Bitte eine Startadresse eingeben, um die Tagesroute zu berechnen.")
+        return
+
+    if st.button("Route berechnen", type="primary"):
+        st.session_state["route_geocode_cache"] = st.session_state.get("route_geocode_cache", {})
+        travel_fn = routing_provider.get_pairwise if routing_provider.is_configured() else None
+
+        aktuell = compute_route(
+            termine_tag, start_adresse, ende_modus, ende_adresse, config,
+            geocode_fn=geocoding_module.geocode, travel_fn=travel_fn, start_zeit=start_zeit,
+            geocode_cache=st.session_state["route_geocode_cache"], reihenfolge="aktuell",
+        )
+        optimiert = compute_route(
+            termine_tag, start_adresse, ende_modus, ende_adresse, config,
+            geocode_fn=geocoding_module.geocode, travel_fn=travel_fn, start_zeit=start_zeit,
+            geocode_cache=st.session_state["route_geocode_cache"], reihenfolge="optimiert",
+        )
+        sales_rows = st.session_state.get("result_rows")
+        if sales_rows:
+            enrich_stops_with_sales_intelligence(aktuell["stops"], sales_rows)
+            enrich_stops_with_sales_intelligence(optimiert["stops"], sales_rows)
+
+        st.session_state["route_aktuell"] = aktuell
+        st.session_state["route_optimiert"] = optimiert
+        st.session_state["route_termine_tag"] = termine_tag
+
+    if "route_aktuell" not in st.session_state:
+        return
+
+    aktuell = st.session_state["route_aktuell"]
+    optimiert = st.session_state["route_optimiert"]
+
+    st.markdown('<div class="d21-section-title">Kennzahlen</div>', unsafe_allow_html=True)
+    _render_route_kpis(optimiert)
+    _render_route_vergleich(aktuell, optimiert)
+    _render_route_timeline(optimiert)
+    _render_route_karte(optimiert)
+
+    st.markdown('<div class="d21-section-title">Passende Unternehmen entlang der Route</div>', unsafe_allow_html=True)
+    _render_nearby_vorschlaege(optimiert, st.session_state["route_termine_tag"], config, st.session_state["route_geocode_cache"])
+
+    st.markdown('<div class="d21-section-title">Excel-Export</div>', unsafe_allow_html=True)
+    sales_rows = st.session_state.get("result_rows")
+    sales_df = pd.DataFrame(sales_rows, columns=RESULT_COLUMNS) if sales_rows else pd.DataFrame(columns=RESULT_COLUMNS)
+    try:
+        route_sheet_name = (config.get("routenplanung") or {}).get("excel", {}).get("sheet_name", "Routenplanung")
+        route_input_df = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=route_sheet_name)
+    except Exception:
+        route_input_df = None
+    route_ergebnis_df = _route_ergebnis_dataframe(optimiert)
+    workbook_bytes = export_workbook_bytes(sales_df, route_input_df, route_ergebnis_df)
+    st.download_button(
+        "Route + Sales Intelligence als Excel herunterladen",
+        data=workbook_bytes,
+        file_name=f"dirs21_routenplanung_{gewaehltes_datum.strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    st.caption(
+        "Enthält das unveränderte Tabellenblatt \"Routenplanung\" plus ein neues Tabellenblatt "
+        "\"Routen-Ergebnis\" mit der berechneten Tour - die Sales-Intelligence-Tabelle bleibt unverändert."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hauptablauf
+# ---------------------------------------------------------------------------
+def main():
+    st.markdown(DESIGN_CSS, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="d21-hero"><h1>DIRS21 Sales Intelligence</h1>'
+        '<p>Vertriebspotenziale erkennen. Prioritäten setzen.</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        config = load_config()
+    except Exception as exc:
+        st.error(f"`config.yaml` konnte nicht geladen werden: {exc}")
+        st.stop()
+
+    st.markdown('<div class="d21-section-title">Excel-Datei hochladen</div>', unsafe_allow_html=True)
+    st.caption(
+        "Eine Datei für beide Reiter: Tabellenblatt \"Sales Intelligence\" (bzw. erstes Tabellenblatt) "
+        "und optional ein zusätzliches Tabellenblatt \"Routenplanung\"."
+    )
+    uploaded_file = st.file_uploader("Excel-Datei hochladen", type=["xlsx"], label_visibility="collapsed")
+    # getvalue() liest den Upload einmal vollständig in den Speicher - jede
+    # Tab-Funktion bekommt danach ihre eigene, unabhängige BytesIO-Kopie
+    # (io.BytesIO(uploaded_bytes)), da ein einzelnes Datei-/Stream-Objekt
+    # nach dem ersten Lesevorgang nicht erneut gelesen werden könnte (beide
+    # Reiter - und innerhalb der Routenplanung sogar zwei Stellen - lesen
+    # dieselbe hochgeladene Datei unabhängig voneinander ein).
+    uploaded_bytes = uploaded_file.getvalue() if uploaded_file else None
+
+    tab_sales, tab_route = st.tabs(["📊 Sales Intelligence", "🗺️ Routenplanung"])
+    with tab_sales:
+        render_sales_intelligence_tab(config, io.BytesIO(uploaded_bytes) if uploaded_bytes else None)
+    with tab_route:
+        render_routenplanung_tab(config, uploaded_bytes)
 
 
 if __name__ == "__main__":

@@ -35,13 +35,24 @@ def read_companies(excel_path: str, config: dict) -> list:
     Komplett leere Zeilen werden übersprungen. Fehlt hotel_name oder website
     in einer sonst befüllten Zeile, wird die Zeile trotzdem übernommen, aber
     über "pruefhinweis_import" markiert (siehe analyze.py).
+
+    Liest - falls in config.yaml -> excel.sheet_name gesetzt - gezielt dieses
+    Tabellenblatt (siehe Auftrag "eine Excel-Datei, mehrere Tabellenblätter",
+    z.B. neben einem separaten "Routenplanung"-Blatt). Existiert kein Blatt
+    mit diesem Namen - etwa bei einer einfachen, einblättrigen Bestandsdatei -
+    wird automatisch das erste Tabellenblatt verwendet, damit bestehende
+    Excel-Dateien ohne Anpassung weiter funktionieren.
     """
+    excel_cfg = config.get("excel") or {}
     try:
-        df = pd.read_excel(excel_path, dtype=str)
+        workbook = pd.ExcelFile(excel_path)
+        sheet_name = excel_cfg.get("sheet_name")
+        selected_sheet = sheet_name if sheet_name in workbook.sheet_names else workbook.sheet_names[0]
+        df = pd.read_excel(workbook, sheet_name=selected_sheet, dtype=str)
     except Exception as exc:
         raise ExcelImportError(f"Excel-Datei '{excel_path}' konnte nicht gelesen werden: {exc}") from exc
 
-    column_map = (config.get("excel") or {}).get("columns", {})
+    column_map = excel_cfg.get("columns", {})
 
     for field in REQUIRED_FIELDS:
         excel_column = column_map.get(field)

@@ -202,9 +202,15 @@ logic/
   status_detection.py              Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
   scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
   recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung
-  exporter.py                      Excel-Export (Ampelformatierung, zentral für analyze.py und app.py)
+  exporter.py                      Excel-Export (Ampelformatierung, zentral für analyze.py und app.py;
+                                     export_workbook_bytes() für den Mehrblatt-Export der Routenplanung)
   hubspot_client.py                 HubSpot-API-Zugriff (read-only) - aktuell von keinem Einstiegspunkt
                                      genutzt, bleibt für eine mögliche spätere HubSpot-Anbindung erhalten
+  route_import.py                  Liest das Tabellenblatt "Routenplanung" ein (siehe unten)
+  route_planner.py                 Tourenplanung: fixe/flexible Termine, kritische Übergänge,
+                                     aktuell-vs-optimiert-Vergleich, Vorschläge entlang der Route
+  geocoding.py                     Adresse -> Koordinaten (Nominatim/OpenStreetMap, kein Pflicht-Key)
+  routing_provider.py              Fahrzeit-/Distanzmatrix (optionale Routing-API, siehe unten)
 data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert, nur für analyze.py)
 exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert, nur für analyze.py)
 ```
@@ -278,6 +284,65 @@ Streamlit Secrets oder eine Umgebungsvariable setzen (siehe
 `.streamlit/secrets.toml.example`) - niemals im Repository speichern. Es
 wird keine Google-Scraping-Lösung verwendet, sondern eine reguläre,
 dokumentierte Such-API (standardmäßig Bing Web Search v7).
+
+## Routenplanung (zweiter Reiter in app.py)
+
+Eigenständiger Funktionsbereich neben der Sales-Intelligence-Analyse, für die
+Tagesplanung vereinbarter Vor-Ort-Termine. Nutzt **dieselbe** hochgeladene
+Excel-Datei, aber ein **zweites Tabellenblatt**:
+
+| Tabellenblatt | Inhalt |
+|---|---|
+| `Sales Intelligence` (bzw. das erste Blatt) | Wie bisher - Unternehmensname, Website, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID. Wird durch die Routenplanung **nicht** erweitert. |
+| `Routenplanung` | Vereinbarte Termine (siehe Spalten unten) - bleibt beim Export unverändert. |
+| `Routen-Ergebnis` (nur im Export) | Die berechnete Tagesroute - wird neu erzeugt, überschreibt nie das Eingabeblatt. |
+
+**Spalten im Tabellenblatt "Routenplanung"** (Namen über `config.yaml` ->
+`routenplanung.excel.columns` anpassbar):
+
+- Pflicht: `Unternehmensname`, `Straße`, `PLZ`, `Ort`, `Termin_Datum`, `Termin_Uhrzeit`
+- Optional: `DIRS21-ID`, `Termin_bis`, `Termin_Status` (`fix` / `flexibel` /
+  leer = Standardtermin), `Flexibel_von`, `Flexibel_bis`,
+  `Termin_Dauer_Minuten` (Standard: 60 Minuten, zentral in `config.yaml` ->
+  `routenplanung.standard_termin_dauer_minuten` konfigurierbar), `Priorität`
+  (A-D), `Bemerkung`. Fehlende optionale Felder verursachen keinen Fehler.
+
+**Grundregel:** Kundenverfügbarkeit > Terminrestriktionen > wirtschaftliche
+Priorität > Fahrtzeitoptimierung. **Fixe Termine** (`Termin_Status = fix`)
+und **Standardtermine** (`Termin_Status` leer) sind zeitliche Anker und
+werden **nie** automatisch verschoben. **Flexible Termine**
+(`Termin_Status = flexibel`) dürfen nur innerhalb von `Flexibel_von`/
+`Flexibel_bis` eingeordnet werden - nie außerhalb. Ist ein Termin nach
+realistischer Fahrzeit nicht mehr rechtzeitig erreichbar, wird das als
+"zeitlich kritisch" markiert, nie stillschweigend verschoben.
+
+**Geocoding** (`logic/geocoding.py`): Adressen werden standardmäßig über den
+kostenlosen OpenStreetMap-Nominatim-Dienst in Koordinaten umgewandelt - **kein
+API-Key nötig**. Kann eine Adresse nicht eindeutig gefunden werden, wird
+**keine Koordinate geraten** - der betroffene Termin wird markiert
+("Adresse konnte nicht eindeutig gefunden werden."), alle anderen Termine
+werden trotzdem normal geplant. Ergebnisse werden pro Sitzung gecacht.
+
+**Routing** (`logic/routing_provider.py`, optional): Echte Fahrzeiten/
+Distanzen zwischen den Terminen benötigen eine Routing-API (Standard:
+[OpenRouteService](https://openrouteservice.org), kostenloser Key ohne
+Zahlungsdaten). Key als `ROUTING_API_KEY` (optional `ROUTING_API_ENDPOINT`
+für einen alternativen/kompatiblen Anbieter) über Streamlit Secrets oder
+Umgebungsvariable setzen - niemals im Repository. **Ohne konfigurierten Key
+startet die App trotzdem**: Termine werden chronologisch nach
+`Termin_Uhrzeit` angezeigt, Fahrzeit/Entfernung bleiben leer ("–"), es wird
+nichts geschätzt oder erfunden.
+
+**Weitere Funktionen:** Vergleich aktuelle vs. optimierte Reihenfolge
+(nur flexible Termine werden dabei umgestellt), einfache Kartendarstellung
+(`st.map`), und "Passende Unternehmen entlang der Route" - Vorschläge aus
+Sales Intelligence ohne Termin am gewählten Tag, in der Nähe der Route
+(Näherung über den Ort, da Sales Intelligence keine Straßenadresse führt),
+sortiert nach Gesamtpriorität vor Distanz. Reines Vorschlagsranking - es wird
+**nie automatisch ein Termin eingeplant**. Die Verknüpfung mit
+Sales-Intelligence-Daten erfolgt bevorzugt über die DIRS21-ID, sonst über
+einen eindeutigen Unternehmensnamen; ist kein sicheres Matching möglich, wird
+der Termin trotzdem geplant, nur ohne Zusatzinformationen.
 
 ## Fachliche Logik (Kurzüberblick)
 
