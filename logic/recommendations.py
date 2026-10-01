@@ -14,24 +14,38 @@ zusatzmodul_als_argument, noch als "neu verkaufen"-Vorschlag in der
 vertrieblichen_prioritaetsaktion. Der fachliche Fit-Score selbst (siehe
 logic/scoring.py) bleibt davon unberührt - er wird weiterhin für jedes Modul
 berechnet und gespeichert, nur die Empfehlung filtert bereits genutzte
-Module heraus. Der Event-Assistent ist von dieser Filterung ausgenommen, da
-er technisch nicht zuverlässig öffentlich erkennbar ist (siehe
-logic/dirs21_detection.py) und deshalb nie als "bereits genutzt" markiert
-werden kann.
+Module heraus. Event-Assistent und Insights sind von dieser Filterung
+ausgenommen, da beide technisch nicht zuverlässig öffentlich als "bereits
+genutzt" erkennbar sind (siehe logic/dirs21_detection.py bzw.
+logic/scoring.py - DIRS21 Insights ist ein reines Backend-/Reporting-Tool
+ohne öffentlich sichtbares Merkmal).
+
+MINDESTSCORE FÜR EINE AKTIVE EMPFEHLUNG (siehe Auftrag): Eine fachliche
+Top-Empfehlung wird nur ausgesprochen, wenn der höchste verbleibende
+(nicht bereits genutzte) Fit-Score mindestens MIN_RECOMMENDATION_SCORE (60)
+beträgt. Ein Modul mit 40-59 Punkten kann fachliches Potenzial haben, wird
+aber NICHT automatisch als aktive Top-Empfehlung ausgespielt - stattdessen
+lautet die Empfehlung KEIN_MODUL_LABEL. fachliche_top_empfehlung_score zeigt
+in diesem Fall weiterhin den höchsten verfügbaren Score (zur Einordnung in
+der Detailansicht und für die unveränderte Gesamtprioritätslogik, die sich
+unabhängig von der Empfehlungsschwelle weiterhin am tatsächlichen Fit
+orientiert).
 """
 
 from .scoring import fit_band
 
-MODULE_ORDER = ["plus", "gutscheinshop", "mice", "event_assistent"]
+MODULE_ORDER = ["plus", "gutscheinshop", "mice", "event_assistent", "insights"]
 MODULE_DISPLAY_NAMES = {
     "plus": "PLUS",
     "gutscheinshop": "Gutscheinshop",
     "mice": "MICE",
     "event_assistent": "Event-Assistent",
+    "insights": "Insights",
 }
 
 # Ordnet jedem Modul das row-Feld zu, das eine bereits erkannte DIRS21-Nutzung
-# anzeigt. event_assistent ist absichtlich NICHT enthalten (siehe Docstring).
+# anzeigt. event_assistent und insights sind absichtlich NICHT enthalten
+# (siehe Modul-Docstring).
 ALREADY_USED_FLAG_BY_MODULE = {
     "plus": "dirs21_plus_erkannt",
     "gutscheinshop": "dirs21_gutscheinshop_erkannt",
@@ -39,7 +53,8 @@ ALREADY_USED_FLAG_BY_MODULE = {
 }
 
 MIN_POTENTIAL_SCORE = 40
-KEIN_MODUL_LABEL = "Kein zusätzliches Modul empfohlen"
+MIN_RECOMMENDATION_SCORE = 60
+KEIN_MODUL_LABEL = "Keine klare Zusatzmodul-Empfehlung"
 
 
 def _ranked_modules(scoring_result: dict):
@@ -54,11 +69,32 @@ def _already_used(module_name: str, row: dict) -> bool:
 
 
 def _recommendable_modules(ranked, row: dict):
-    """Filtert bereits als DIRS21-Produkt genutzte Module heraus (Grundregel,
-    siehe Modul-Docstring) und danach Module ohne relevanten fachlichen Fit
-    (Fit-Band "kein Fit", siehe logic/scoring.fit_band)."""
-    not_used = [(name, score) for name, score in ranked if not _already_used(name, row)]
-    return [(name, score) for name, score in not_used if fit_band(score) != "kein Fit"]
+    """Filtert ausschließlich bereits als DIRS21-Produkt genutzte Module heraus
+    (Grundregel, siehe Modul-Docstring) - event_assistent und insights können
+    nie herausgefiltert werden. Der Mindestscore für eine AKTIVE Empfehlung
+    (MIN_RECOMMENDATION_SCORE) wird separat in build_recommendation geprüft,
+    damit auch schwächere Potenziale (z.B. für weitere_fachliche_potenziale)
+    weiterhin sichtbar bleiben."""
+    return [(name, score) for name, score in ranked if not _already_used(name, row)]
+
+
+def empfehlungsstatus(score) -> str:
+    """Interner Empfehlungsstatus je Fit-Score (siehe Auftrag) - aktuell ohne
+    eigene Spalte in Haupttabelle/Excel-Export, aber nutzbar für Detailansicht
+    oder künftige Erweiterungen:
+    80-100 sehr starke Empfehlung, 60-79 Empfehlung, 40-59 Potenzial
+    vorhanden, 0-39 keine aktive Empfehlung."""
+    try:
+        score = float(score)
+    except (TypeError, ValueError):
+        return "keine aktive Empfehlung"
+    if score >= 80:
+        return "sehr starke Empfehlung"
+    if score >= 60:
+        return "Empfehlung"
+    if score >= 40:
+        return "Potenzial vorhanden"
+    return "keine aktive Empfehlung"
 
 
 def _gesamtprioritaet(canonical_adressgruppe: str, top_score: int) -> str:
@@ -167,19 +203,21 @@ def build_recommendation(canonical_adressgruppe: str, row: dict, scoring_result:
     hotel_name, erkannter_hoteltyp.
     """
     ranked = _ranked_modules(scoring_result)
+    # Bereits genutzte Produkte ausgeschlossen, aber event_assistent/insights
+    # können nie leer sein (siehe _recommendable_modules) - recommendable
+    # enthält deshalb immer mindestens einen Eintrag.
     recommendable = _recommendable_modules(ranked, row)
-    has_recommendable_module = bool(recommendable)
+    top_name, top_score = recommendable[0]
+    has_recommendable_module = top_score >= MIN_RECOMMENDATION_SCORE
+    top_display = MODULE_DISPLAY_NAMES[top_name] if has_recommendable_module else KEIN_MODUL_LABEL
 
-    if has_recommendable_module:
-        top_name, top_score = recommendable[0]
-        top_display = MODULE_DISPLAY_NAMES[top_name]
-    else:
-        top_score = 0
-        top_display = KEIN_MODUL_LABEL
-
+    # "Weitere fachliche Potenziale": alle übrigen, nicht bereits genutzten
+    # Module mit mindestens MIN_POTENTIAL_SCORE (40) - unabhängig davon, ob
+    # das Top-Modul die Empfehlungsschwelle (60) erreicht hat.
+    weitere_kandidaten = recommendable[1:] if has_recommendable_module else recommendable
     weitere = [
         MODULE_DISPLAY_NAMES[name]
-        for name, score in recommendable[1:]
+        for name, score in weitere_kandidaten
         if score >= MIN_POTENTIAL_SCORE
     ]
 

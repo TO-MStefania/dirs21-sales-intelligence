@@ -50,26 +50,50 @@ PLUS_NEGATIVE_ONLY_FEATURES = [
 
 # ---------------------------------------------------------------------------
 # GUTSCHEINSHOP
+#
+# Bewusst konservativ (siehe Auftrag): Ein einfacher Hotel-/Restaurantbetrieb
+# oder ein einzelnes Arrangement darf für sich allein KEINEN hohen Fit
+# erzeugen - solche "schwachen" Signale (GUTSCHEIN_WEAK_FEATURES) dürfen
+# einen gewissen Fit erzeugen, bleiben aber hart unter der Empfehlungsschwelle
+# (MIN_RECOMMENDATION_SCORE = 60 in logic/recommendations.py) gedeckelt. Nur
+# "starke" Signale (bereits sichtbares Gutschein-/Geschenkangebot, hochwertige
+# Wellness-/Spa-Angebote, mehrere Arrangements, explizite saisonale
+# Geschenkaktionen) dürfen einen hohen Fit auslösen - und auch dort erst durch
+# die Kombination mehrerer Signale (kein einzelnes Keyword reicht automatisch).
 # ---------------------------------------------------------------------------
-GUTSCHEIN_POSITIVE_FEATURES = {
+GUTSCHEIN_STRONG_FEATURES = {
     "Wertgutschein": ["wertgutschein"],
     "Wellnessgutschein": ["wellnessgutschein"],
     "Restaurantgutschein": ["restaurantgutschein"],
     "Reisegutschein": ["reisegutschein"],
     "Sachgutschein": ["sachgutschein"],
-    "Geschenkidee": ["geschenkidee", "geschenkideen"],
+    "Explizites Geschenkangebot": ["geschenkidee", "geschenkideen", "geschenkgutschein", "verschenken sie", "das perfekte geschenk"],
     "Romantikangebot": ["romantikangebot", "romantikpaket", "romantik-angebot"],
-    "Gutschein-Shop": ["gutscheinshop", "gutschein-shop", "gutschein shop", "gutschein kaufen", "gutscheine kaufen"],
-    "Saisonale Geschenkaktion": ["weihnachtsgutschein", "valentinstag", "muttertag"],
+    "Gutschein-Shop (Fremd-/unbekannter Anbieter)": [
+        "gutscheinshop", "gutschein-shop", "gutschein shop", "gutschein kaufen", "gutscheine kaufen",
+    ],
+    "Saisonale Geschenkaktion": [
+        "weihnachtsgutschein", "weihnachtsangebot", "valentinstag", "muttertag", "silvesterangebot",
+    ],
+    "Hochwertiges Wellness-/Spa-Angebot": [
+        "day spa", "dayspa", "spa-suite", "spasuite", "wellnesssuite", "private spa", "exklusiver spa",
+        "premium spa", "wellness-oase",
+    ],
+    "Mehrere hochwertige Arrangements": [
+        "mehrere arrangements", "verschiedene arrangements", "unsere arrangements", "exklusive arrangements",
+    ],
 }
 
-GUTSCHEIN_POTENTIAL_FEATURES = {
-    "Wellness-Angebot": ["wellness"],
-    "Spa-Angebot": ["spa"],
-    "Restaurant-Angebot": ["restaurant"],
-    "Romantik-Angebot": ["romantik"],
-    "Hochwertiges Arrangement": ["arrangement", "arrangements"],
+# Schwächere Signale (siehe Auftrag): dürfen einen gewissen Fit erzeugen,
+# aber NIE automatisch eine aktive Empfehlung (Deckel in _score_gutscheinshop).
+GUTSCHEIN_WEAK_FEATURES = {
+    "Restaurant (allein)": ["restaurant"],
+    "Wellness (allein)": ["wellness"],
+    "Spa (allein)": ["spa"],
+    "Einzelnes Arrangement": ["arrangement", "arrangements"],
+    "Frühstück": ["frühstück", "fruehstueck"],
 }
+GUTSCHEIN_WEAK_SCORE_CAP = 55  # bleibt unter MIN_RECOMMENDATION_SCORE (60)
 
 # ---------------------------------------------------------------------------
 # MICE: Tagungen / Konferenzen / Business-Veranstaltungen
@@ -138,6 +162,51 @@ HOTELTYP_HINWEISE = {
     "Stadthotel": ["stadthotel", "cityhotel", "city hotel"],
 }
 
+# ---------------------------------------------------------------------------
+# INSIGHTS: datenbasierte Performance-Auswertung (Buchungen, Umsatz, ADR,
+# Stornoquote, Channel-Mix, Trends, Wettbewerbsvergleich, ...). Backend-/
+# Reporting-Tool - NICHT über die Website als "bereits genutzt" erkennbar
+# (siehe logic/dirs21_detection.py - es gibt bewusst kein
+# dirs21_insights_erkannt-Flag). Der Fit bewertet ausschließlich, wie komplex/
+# vielschichtig der öffentlich sichtbare Betrieb ist (mehrere Zielgruppen,
+# zusätzliche Umsatzbereiche, saisonale Schwankungen) - je mehr
+# unterschiedliche Signale kombiniert vorliegen, desto eher lohnt sich eine
+# datengetriebene Auswertung. Kein einzelnes Keyword darf für sich allein
+# einen hohen Score auslösen (siehe _score_insights).
+# ---------------------------------------------------------------------------
+INSIGHTS_BUSINESS_FEATURES = {
+    "Business-/Tagungshotel": ["businesshotel", "business hotel", "tagungshotel", "konferenzhotel"],
+    "Geschäftsreisende": ["geschäftsreisende", "geschaeftsreisende", "businessgäste", "business-gäste"],
+    "Messehotel": ["messehotel", "messe hotel"],
+}
+INSIGHTS_LEISURE_FEATURES = {
+    "Ferien-/Urlaubsgäste": [
+        "ferienhotel", "urlaubshotel", "familienurlaub", "wanderhotel", "wellnesshotel",
+        "urlaubsgäste", "feriengäste", "erholungssuchende",
+    ],
+    "Freizeitangebot": ["freizeitangebot", "ausflüge", "ausfluege"],
+}
+INSIGHTS_RESTAURANT_FEATURES = {
+    "Restaurant": ["restaurant", "gourmetrestaurant"],
+}
+INSIGHTS_WELLNESS_FEATURES = {
+    "Wellness": ["wellness"],
+    "Spa": ["spa"],
+}
+INSIGHTS_ARRANGEMENT_FEATURES = {
+    "Arrangement/Package": ["arrangement", "arrangements", "package", "packages"],
+    "Upgrade": ["upgrade", "upgrades"],
+}
+INSIGHTS_SEASONAL_FEATURES = {
+    "Saisonales Angebot": [
+        "saisonangebot", "sommerangebot", "winterangebot", "nebensaison", "hauptsaison",
+        "weihnachtsangebot", "silvesterangebot", "osterangebot",
+    ],
+}
+INSIGHTS_EVENT_FEATURES = {
+    "Veranstaltungen": ["veranstaltung", "veranstaltungen", "event", "events"],
+}
+
 
 def _find_matches(text: str, feature_dict: dict):
     return [label for label, keywords in feature_dict.items() if any(kw in text for kw in keywords)]
@@ -167,18 +236,26 @@ def _score_plus(text: str):
 
 
 def _score_gutscheinshop(text: str):
-    matches = _find_matches(text, GUTSCHEIN_POSITIVE_FEATURES)
-    if matches:
-        score = _score_from_match_count(len(matches))
-        begruendung = "Gutschein-/Geschenkangebote erkannt: " + ", ".join(matches) + "."
-        return score, begruendung, matches
+    strong_matches = _find_matches(text, GUTSCHEIN_STRONG_FEATURES)
+    weak_matches = _find_matches(text, GUTSCHEIN_WEAK_FEATURES)
 
-    potential_matches = _find_matches(text, GUTSCHEIN_POTENTIAL_FEATURES)
-    if potential_matches:
-        return 45, (
-            "Kein sichtbarer Gutscheinshop gefunden, aber Potenzial vorhanden durch: "
-            + ", ".join(potential_matches) + "."
-        ), potential_matches
+    if strong_matches:
+        score = _score_from_match_count(len(strong_matches), base=50, step=14, cap=95)
+        if weak_matches:
+            score = min(95, score + 5)
+        begruendung = "Starke Gutschein-/Geschenkangebote erkannt: " + ", ".join(strong_matches) + "."
+        return score, begruendung, strong_matches + weak_matches
+
+    if weak_matches:
+        # Bewusst konservativ gedeckelt (siehe Auftrag): ein einfacher
+        # Restaurant-/Wellnessbetrieb oder ein einzelnes Arrangement allein
+        # darf nie eine aktive Empfehlung auslösen (Deckel < 60).
+        score = min(GUTSCHEIN_WEAK_SCORE_CAP, _score_from_match_count(len(weak_matches), base=25, step=10, cap=95))
+        begruendung = (
+            "Nur schwächere Signale ohne sichtbaren Gutscheinshop erkannt: " + ", ".join(weak_matches)
+            + ". Reicht allein nicht für eine aktive Empfehlung."
+        )
+        return score, begruendung, weak_matches
 
     return 0, "Keine Gutschein-, Wellness-, Spa- oder Romantikangebote öffentlich erkannt.", []
 
@@ -236,12 +313,104 @@ def _detect_hoteltyp(text: str) -> str:
     return "unbekannt / nicht eindeutig erkennbar"
 
 
-def score_all_modules(combined_text: str) -> dict:
-    """Berechnet Fit-Scores für alle vier Module sowie Hoteltyp und gefundene Merkmale.
+def _build_hotel_profile(text: str, zimmeranzahl=None) -> dict:
+    """Bündelt die aus dem öffentlich sichtbaren Website-Text ableitbaren
+    Signale an einer zentralen Stelle (siehe Auftrag "Hotelprofil intern
+    strukturieren"), damit nicht jede Produktlogik dieselben Website-
+    informationen erneut separat interpretieren muss. Reine Textauswertung
+    des bereits übergebenen, kombinierten Seitentexts - löst KEINE
+    zusätzlichen Web-Requests aus. Wird aktuell von _score_insights()
+    verwendet (Tagungs-/Event-Signale werden dafür bewusst wiederverwendet,
+    statt erneut eigene Regex-Treffer zu berechnen)."""
+    business_signale = _find_matches(text, INSIGHTS_BUSINESS_FEATURES)
+    hoteltyp = _detect_hoteltyp(text)
+    if not business_signale and hoteltyp in ("Business-/Tagungshotel", "Stadthotel"):
+        business_signale = [hoteltyp]
+
+    return {
+        "hoteltyp": hoteltyp,
+        "zimmeranzahl": zimmeranzahl,
+        "business_signale": business_signale,
+        "leisure_signale": _find_matches(text, INSIGHTS_LEISURE_FEATURES),
+        "restaurant": _find_matches(text, INSIGHTS_RESTAURANT_FEATURES),
+        "wellness": _find_matches(text, INSIGHTS_WELLNESS_FEATURES),
+        "arrangements": _find_matches(text, INSIGHTS_ARRANGEMENT_FEATURES),
+        "tagung": _find_matches(text, MICE_CORE_FEATURES),
+        "events": _find_matches(text, INSIGHTS_EVENT_FEATURES),
+        "zusatzleistungen": _find_matches(text, PLUS_POSITIVE_FEATURES),
+        "saisonalitaet": _find_matches(text, INSIGHTS_SEASONAL_FEATURES),
+    }
+
+
+def _score_insights(text: str, zimmeranzahl=None):
+    profile = _build_hotel_profile(text, zimmeranzahl)
+
+    # Jede Kategorie zählt nur einmal, unabhängig davon, wie viele einzelne
+    # Keywords innerhalb der Kategorie getroffen haben - verhindert, dass ein
+    # einzelnes Keyword (bzw. mehrere Synonyme davon) für sich allein einen
+    # hohen Score auslöst (siehe Auftrag).
+    categories = []
+    if profile["business_signale"]:
+        categories.append(("Business-Ausrichtung", profile["business_signale"]))
+    if profile["leisure_signale"]:
+        categories.append(("Leisure-Ausrichtung", profile["leisure_signale"]))
+    if profile["restaurant"]:
+        categories.append(("Restaurant zusätzlich zum Hotel", profile["restaurant"]))
+    if profile["wellness"]:
+        categories.append(("Wellness-/Spa-Angebot", profile["wellness"]))
+    if profile["arrangements"]:
+        categories.append(("Arrangements/Packages", profile["arrangements"]))
+    if profile["saisonalitaet"]:
+        categories.append(("Saisonale Angebote", profile["saisonalitaet"]))
+    if profile["tagung"]:
+        categories.append(("MICE-/Tagungsangebot", profile["tagung"]))
+    if profile["events"]:
+        categories.append(("Veranstaltungen", profile["events"]))
+
+    num_categories = len(categories)
+    if num_categories == 0:
+        return 0, (
+            "Keine aussagekräftigen Signale für Business-/Leisure-Mix, Zusatzangebote oder "
+            "Angebotskomplexität öffentlich erkannt."
+        ), []
+
+    score = _score_from_match_count(num_categories, base=35, step=15, cap=90)
+    if profile["business_signale"] and profile["leisure_signale"]:
+        # Business- und Leisure-Mix deutet besonders stark auf einen
+        # komplexen Channel-/Umsatzmix hin (siehe Auftrag-Beispiel).
+        score = min(95, score + 15)
+
+    # Zimmeranzahl ist nur ein ergänzendes Signal (siehe Auftrag) - erhöht den
+    # Fit leicht, erzeugt aber niemals allein (ohne mindestens eine der
+    # obigen Kategorien) einen hohen Insights-Fit.
+    try:
+        zimmer_numeric = float(zimmeranzahl) if zimmeranzahl not in (None, "") else None
+    except (TypeError, ValueError):
+        zimmer_numeric = None
+    if zimmer_numeric is not None:
+        if zimmer_numeric >= 100:
+            score = min(95, score + 8)
+        elif zimmer_numeric >= 50:
+            score = min(95, score + 4)
+
+    matches = [m for _, found in categories for m in found]
+    begruendung = "Mehrere Signale für Angebotskomplexität erkannt: " + "; ".join(
+        f"{label} ({', '.join(found[:3])})" for label, found in categories
+    ) + "."
+    return score, begruendung, matches
+
+
+def score_all_modules(combined_text: str, zimmeranzahl=None) -> dict:
+    """Berechnet Fit-Scores für alle fünf Module (PLUS, Gutscheinshop, MICE,
+    Event-Assistent, Insights) sowie Hoteltyp und gefundene Merkmale.
 
     combined_text: zusammengeführter, öffentlich sichtbarer Text aller
     gecrawlten Seiten (bereits kleingeschrieben oder nicht - wird hier
     normalisiert).
+    zimmeranzahl: optionaler, bereits aufgelöster Zimmeranzahl-Wert (siehe
+    logic/room_count_detection.resolve_room_count) - wird AUSSCHLIESSLICH als
+    ergänzendes Signal für den Insights-Fit verwendet, nie allein für einen
+    hohen Fit (siehe _score_insights) und fließt in kein anderes Modul ein.
     """
     text = (combined_text or "").lower()
 
@@ -249,6 +418,7 @@ def score_all_modules(combined_text: str) -> dict:
     gutschein_score, gutschein_begruendung, gutschein_matches = _score_gutscheinshop(text)
     mice_score, mice_begruendung, mice_matches = _score_mice(text)
     event_score, event_begruendung, event_matches = _score_event_assistent(text)
+    insights_score, insights_begruendung, insights_matches = _score_insights(text, zimmeranzahl)
 
     merkmale = []
     for prefix, matches in (
@@ -256,6 +426,7 @@ def score_all_modules(combined_text: str) -> dict:
         ("Gutscheinshop", gutschein_matches),
         ("MICE", mice_matches),
         ("Event-Assistent", event_matches),
+        ("Insights", insights_matches),
     ):
         merkmale.extend(f"{prefix}: {m}" for m in matches)
 
@@ -266,6 +437,7 @@ def score_all_modules(combined_text: str) -> dict:
         "gutscheinshop": {"score": gutschein_score, "begruendung": gutschein_begruendung},
         "mice": {"score": mice_score, "begruendung": mice_begruendung},
         "event_assistent": {"score": event_score, "begruendung": event_begruendung},
+        "insights": {"score": insights_score, "begruendung": insights_begruendung},
     }
 
 

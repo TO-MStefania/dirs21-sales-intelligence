@@ -49,6 +49,7 @@ FIT_SCORE_COLUMNS = {
     "gutscheinshop_fit_score",
     "mice_fit_score",
     "event_assistent_fit_score",
+    "insights_fit_score",
     "fachliche_top_empfehlung_score",
 }
 

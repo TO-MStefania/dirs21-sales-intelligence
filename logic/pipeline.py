@@ -26,7 +26,8 @@ from logic import web_search as web_search_module
 # Begründungsspalten, keine weiteren Potenziale, kein Gesprächseinstieg.
 # zimmeranzahl ist eine reine Zusatzinformation (siehe
 # logic/room_count_detection.py) und fließt an keiner Stelle in Fit-Score,
-# Gesamtpriorität oder Vertriebslogik ein.
+# Gesamtpriorität oder Vertriebslogik ein. dirs21_id bleibt ebenfalls ein
+# reiner Identifikator ohne jeden Score-Effekt (siehe logic/recommendations.py).
 RESULT_COLUMNS = [
     "hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id",
     "crm_status", "dirs21_direktbuchung_erkannt", "dirs21_gutscheinshop_erkannt",
@@ -34,9 +35,22 @@ RESULT_COLUMNS = [
     "dirs21_erkennungssicherheit", "statusklasse", "verkaufsmodus",
     "erkannter_hoteltyp", "gefundene_merkmale", "plus_fit_score",
     "gutscheinshop_fit_score", "mice_fit_score", "event_assistent_fit_score",
+    "insights_fit_score",
     "fachliche_top_empfehlung", "fachliche_top_empfehlung_score",
     "vertriebliche_prioritaetsaktion", "zusatzmodul_als_argument",
     "gesamtprioritaet", "pruefhinweis", "crawler_status", "analyse_datum",
+]
+
+# Kurze, faktenbasierte Fit-Begründungen je Produkt (siehe logic/scoring.py) -
+# bewusst NICHT Teil von RESULT_COLUMNS: analyze.py und export_to_excel_bytes
+# bauen ihr DataFrame explizit mit columns=RESULT_COLUMNS, wodurch diese
+# Felder automatisch aus dem Excel-Export und dem CLI-Ergebnis herausfallen
+# ("Excel bleibt schlank", siehe Auftrag). app.py liest sie zusätzlich aus
+# row (über FIT_BEGRUENDUNG_COLUMNS) und zeigt sie NUR in der Webapp-
+# Detailansicht pro Produkt an.
+FIT_BEGRUENDUNG_COLUMNS = [
+    "plus_fit_begruendung", "gutscheinshop_fit_begruendung", "mice_fit_begruendung",
+    "event_assistent_fit_begruendung", "insights_fit_begruendung",
 ]
 
 # Ab diesem fachlichen Fit-Score gilt eine Funktion (Gutschein/PLUS/MICE) als
@@ -61,6 +75,7 @@ EMPTY_SCORING = {
     "gutscheinshop": {"score": 0, "begruendung": ""},
     "mice": {"score": 0, "begruendung": ""},
     "event_assistent": {"score": 0, "begruendung": ""},
+    "insights": {"score": 0, "begruendung": ""},
 }
 
 
@@ -167,7 +182,11 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
 
     _report(progress_callback, "Fit wird berechnet")
     try:
-        scoring_result = score_all_modules(combined_text)
+        # zimmeranzahl ist zu diesem Zeitpunkt bereits aufgelöst (Excel/Website/
+        # Websuche, siehe oben) - wird an score_all_modules ausschließlich als
+        # ergänzendes Signal für den Insights-Fit weitergereicht, nie für die
+        # anderen Module (siehe logic/scoring._score_insights).
+        scoring_result = score_all_modules(combined_text, zimmeranzahl=row["zimmeranzahl"])
     except Exception as exc:
         scoring_result = dict(EMPTY_SCORING)
         pruefhinweise.append(f"Scoring fehlgeschlagen: {exc}")
@@ -178,6 +197,15 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
     row["gutscheinshop_fit_score"] = scoring_result["gutscheinshop"]["score"]
     row["mice_fit_score"] = scoring_result["mice"]["score"]
     row["event_assistent_fit_score"] = scoring_result["event_assistent"]["score"]
+    row["insights_fit_score"] = scoring_result["insights"]["score"]
+
+    # Kurze Fit-Begründungen je Produkt - nur für die Webapp-Detailansicht
+    # (siehe FIT_BEGRUENDUNG_COLUMNS oben), nie für Excel-Export/CLI-Ausgabe.
+    row["plus_fit_begruendung"] = scoring_result["plus"]["begruendung"]
+    row["gutscheinshop_fit_begruendung"] = scoring_result["gutscheinshop"]["begruendung"]
+    row["mice_fit_begruendung"] = scoring_result["mice"]["begruendung"]
+    row["event_assistent_fit_begruendung"] = scoring_result["event_assistent"]["begruendung"]
+    row["insights_fit_begruendung"] = scoring_result["insights"]["begruendung"]
 
     # Funktion öffentlich vorhanden (fachlicher Fit-Score), aber technisch
     # nicht eindeutig DIRS21 zugeordnet (Produkt-Flag bleibt false): kein
