@@ -190,6 +190,29 @@ def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
+def _ensure_columns(df: pd.DataFrame, columns) -> pd.DataFrame:
+    """Stellt sicher, dass alle angegebenen Spalten im DataFrame existieren -
+    schützt die gesamte Oberfläche (KPI-Dashboard, Filter, Tabelle,
+    Detailansicht, Excel-Export) davor, mit einem KeyError abzubrechen, falls
+    eine optionale Spalte wie "zimmeranzahl" fehlt (z.B. bei Ergebnissen aus
+    einer älteren Session/Version). Fehlende Spalten werden leer ("") ergänzt -
+    nicht als NaN, damit sie sich wie jede andere "nicht gefunden"-Spalte im
+    Rest der App verhalten (z.B. bei str-Vergleichen in den Schnellfiltern)."""
+    df = df.copy()
+    for col in columns:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+def _safe_series(df: pd.DataFrame, column: str) -> pd.Series:
+    """Liefert eine Spalte defensiv - auch wenn sie (noch) nicht existiert,
+    statt mit df[column] einen KeyError auszulösen."""
+    if column in df.columns:
+        return df[column]
+    return pd.Series([""] * len(df), index=df.index, dtype=object)
+
+
 @st.cache_data(show_spinner=False)
 def load_config():
     with open("config.yaml", "r", encoding="utf-8") as f:
@@ -200,16 +223,22 @@ def load_config():
 # KPI-Dashboard
 # ---------------------------------------------------------------------------
 def render_kpi_dashboard(df: pd.DataFrame) -> None:
+    """Zeigt die KPI-Karten. Greift auf alle Spalten ausschließlich über
+    _safe_series() zu, damit eine fehlende optionale Spalte (z.B.
+    "zimmeranzahl" in einem Ergebnis aus einer älteren Session/Version) das
+    Dashboard nie mit einem KeyError abbrechen lässt - fehlt sie, wird sie
+    wie "nicht gefunden" behandelt (Ø Zimmeranzahl = "-")."""
     st.markdown('<div class="d21-section-title">Überblick</div>', unsafe_allow_html=True)
 
-    scores = _numeric(df["fachliche_top_empfehlung_score"])
-    zimmer = _numeric(df["zimmeranzahl"])
+    scores = _numeric(_safe_series(df, "fachliche_top_empfehlung_score"))
+    zimmer = _numeric(_safe_series(df, "zimmeranzahl"))
     zimmer_gefunden = zimmer.dropna()
+    prioritaet = _safe_series(df, "gesamtprioritaet")
 
     kpis = [
         ("Analysierte Unternehmen", f"{len(df)}"),
-        ("Priorität A", f"{int((df['gesamtprioritaet'] == 'A').sum())}"),
-        ("Priorität B", f"{int((df['gesamtprioritaet'] == 'B').sum())}"),
+        ("Priorität A", f"{int((prioritaet == 'A').sum())}"),
+        ("Priorität B", f"{int((prioritaet == 'B').sum())}"),
         ("Ø Top-Fit-Score", f"{scores.mean():.0f}" if scores.notna().any() else "–"),
         ("Ø Zimmeranzahl", f"{zimmer_gefunden.mean():.0f}" if len(zimmer_gefunden) else "–"),
         ("Ohne Zimmeranzahl", f"{int(zimmer.isna().sum())}"),
@@ -542,6 +571,12 @@ def main():
         return
 
     full_df = pd.DataFrame(st.session_state["result_rows"], columns=RESULT_COLUMNS)
+    # Sicherheitsnetz: garantiert, dass alle RESULT_COLUMNS vorhanden sind -
+    # auch bei Ergebnissen aus einer älteren Session/Version ohne neuere
+    # optionale Spalten wie "zimmeranzahl". Schützt KPI-Dashboard, Filter,
+    # Ergebnistabelle, Detailansicht und Excel-Export gemeinsam an einer
+    # einzigen Stelle vor einem KeyError.
+    full_df = _ensure_columns(full_df, RESULT_COLUMNS)
     st.success(f"{len(full_df)} Unternehmen analysiert.")
 
     # --- KPI-Dashboard ------------------------------------------------------
