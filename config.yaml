@@ -26,6 +26,14 @@ excel:
     dirs21_id: DIRS21-ID
     # optional - falls in deinem Export nicht vorhanden, bleibt das Feld leer
     record_id: Record ID
+    # optional - werden NICHT in die Sales-Intelligence-Auswertung/den Export
+    # übernommen (siehe logic/pipeline.py, RESULT_COLUMNS bleibt unverändert),
+    # sondern ausschließlich für die Adress-Vorbefüllung im Reiter
+    # "Routenplanung" verwendet, falls vorhanden (siehe Auftrag). Fehlen diese
+    # Spalten im Export, bleiben sie leer - der Nutzer ergänzt die Adresse
+    # dann manuell beim Anlegen eines Termins.
+    strasse: Straße
+    plz: PLZ
 
 hubspot:
   # Mapping: fachlicher (interner) Name -> tatsächlicher HubSpot-Property-Name
@@ -83,17 +91,20 @@ analysis:
   save_interval: 5
 
 # Routenplanung (eigener Webapp-Reiter, siehe logic/route_planner.py).
-# Liest ein zusätzliches Tabellenblatt derselben Excel-Datei ein - die
+# Termine werden primär DIREKT IN DER WEBAPP angelegt (siehe Auftrag) und nur
+# für die laufende Session im Streamlit Session State gehalten - ein
+# Tabellenblatt "Routenplanung" in der hochgeladenen Excel-Datei ist
+# OPTIONAL und wird nur importiert, falls vorhanden. Die
 # Sales-Intelligence-Logik (Scoring, Produkterkennung, CRM-Status, Export)
 # bleibt davon vollständig unberührt.
 routenplanung:
   excel:
-    # Name des Eingabe-Tabellenblatts mit den Terminen. Fehlt dieses Blatt,
-    # wird der Reiter "Routenplanung" leer angezeigt, ohne die App zum
-    # Absturz zu bringen.
+    # Name des optionalen Eingabe-Tabellenblatts mit bereits vorhandenen
+    # Terminen. Fehlt dieses Blatt, wird nichts importiert - kein Fehler,
+    # Termine können vollständig in der Webapp angelegt werden.
     sheet_name: "Routenplanung"
     # Mapping: fachlicher (interner) Name -> Spaltenüberschrift im
-    # Routenplanung-Tabellenblatt.
+    # Routenplanung-Tabellenblatt (gilt für Import UND Export).
     columns:
       hotel_name: Unternehmensname
       dirs21_id: DIRS21-ID
@@ -107,7 +118,8 @@ routenplanung:
       flexibel_von: Flexibel_von
       flexibel_bis: Flexibel_bis
       termin_dauer_minuten: Termin_Dauer_Minuten
-      prioritaet: Priorität
+      prioritaet: Gesamtpriorität
+      fachliche_top_empfehlung: Fachliche_Top_Empfehlung
       bemerkung: Bemerkung
   # Name des beim Export zusätzlich erzeugten Ergebnis-Tabellenblatts (siehe
   # logic/exporter.py -> export_workbook_bytes). Das Eingabeblatt

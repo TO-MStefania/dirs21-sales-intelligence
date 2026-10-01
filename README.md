@@ -206,7 +206,8 @@ logic/
                                      export_workbook_bytes() für den Mehrblatt-Export der Routenplanung)
   hubspot_client.py                 HubSpot-API-Zugriff (read-only) - aktuell von keinem Einstiegspunkt
                                      genutzt, bleibt für eine mögliche spätere HubSpot-Anbindung erhalten
-  route_import.py                  Liest das Tabellenblatt "Routenplanung" ein (siehe unten)
+  route_import.py                  build_termin() für in der Webapp angelegte Termine + optionales Einlesen
+                                     eines bereits vorhandenen Tabellenblatts "Routenplanung" (siehe unten)
   route_planner.py                 Tourenplanung: fixe/flexible Termine, kritische Übergänge,
                                      aktuell-vs-optimiert-Vergleich, Vorschläge entlang der Route
   geocoding.py                     Adresse -> Koordinaten (Nominatim/OpenStreetMap, kein Pflicht-Key)
@@ -229,6 +230,10 @@ können):
 - Adressgruppe (optional, aber wichtig für den CRM-Status)
 - DIRS21-ID (optional, reiner Identifikator)
 - HubSpot Record ID (optional)
+- Straße, PLZ (optional - fließen **nicht** in die Sales-Intelligence-Analyse
+  oder deren Export ein, sondern dienen ausschließlich der Adress-
+  Vorbefüllung beim Anlegen eines Termins im Reiter "Routenplanung", siehe
+  unten. Fehlen sie, wird die Adresse dort manuell ergänzt.)
 
 Fehlt eine optionale Spalte im Export komplett, läuft die Analyse trotzdem.
 Fehlt bei einem Unternehmen der Name oder die Website, wird der Datensatz
@@ -288,24 +293,47 @@ dokumentierte Such-API (standardmäßig Bing Web Search v7).
 ## Routenplanung (zweiter Reiter in app.py)
 
 Eigenständiger Funktionsbereich neben der Sales-Intelligence-Analyse, für die
-Tagesplanung vereinbarter Vor-Ort-Termine. Nutzt **dieselbe** hochgeladene
-Excel-Datei, aber ein **zweites Tabellenblatt**:
+Tagesplanung vereinbarter Vor-Ort-Termine. Termine werden **primär direkt in
+der Webapp** angelegt, bearbeitet und gelöscht - ein eigenes Tabellenblatt in
+der hochgeladenen Excel-Datei ist dafür **nicht erforderlich**:
+
+1. HubSpot-Excel hochladen und im Reiter "Sales Intelligence" analysieren.
+2. Im Reiter "Routenplanung" im Formular "Termin hinzufügen" ein Unternehmen
+   aus der Dropdown-Liste der bereits analysierten Unternehmen auswählen
+   (oder manuell eintragen) - Ort/Straße/PLZ (falls im Export vorhanden),
+   Gesamtpriorität und fachliche Top-Empfehlung werden automatisch
+   übernommen und können ergänzt/korrigiert werden.
+3. Beliebig viele weitere Termine hinzufügen, in der Terminliste bearbeiten
+   oder löschen - die Liste bleibt für die laufende Session erhalten
+   (`st.session_state["route_termine"]`), auch wenn die Seite durch Filter
+   oder andere Eingaben neu gerendert wird.
+4. Tourdatum, Startadresse und Tourende wählen und auf "Route optimieren"
+   klicken.
+5. Ergebnis (Kennzahlen, Tagesroute, Karte, Vorschläge) ansehen und die
+   Excel-Datei mit allen drei Tabellenblättern herunterladen.
 
 | Tabellenblatt | Inhalt |
 |---|---|
 | `Sales Intelligence` (bzw. das erste Blatt) | Wie bisher - Unternehmensname, Website, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID. Wird durch die Routenplanung **nicht** erweitert. |
-| `Routenplanung` | Vereinbarte Termine (siehe Spalten unten) - bleibt beim Export unverändert. |
-| `Routen-Ergebnis` (nur im Export) | Die berechnete Tagesroute - wird neu erzeugt, überschreibt nie das Eingabeblatt. |
+| `Routenplanung` | Wird beim Export **automatisch aus den in der Webapp gepflegten Terminen** erzeugt - dokumentiert alle angelegten Termine. |
+| `Routen-Ergebnis` | Die berechnete Tagesroute für das gewählte Datum - wird neu erzeugt. |
 
-**Spalten im Tabellenblatt "Routenplanung"** (Namen über `config.yaml` ->
-`routenplanung.excel.columns` anpassbar):
+**Optionaler Import:** Enthält die hochgeladene Excel-Datei bereits ein
+Tabellenblatt `Routenplanung` (z.B. aus einem früheren Export oder einer
+bestehenden Terminliste), werden dessen Termine einmalig automatisch in die
+Webapp übernommen und können dort weiterbearbeitet werden. Fehlt das Blatt,
+startet die App ohne Fehler - Termine werden dann vollständig manuell
+angelegt. Spaltennamen sind über `config.yaml` -> `routenplanung.excel.columns`
+anpassbar:
 
-- Pflicht: `Unternehmensname`, `Straße`, `PLZ`, `Ort`, `Termin_Datum`, `Termin_Uhrzeit`
+- Pflicht (für einen vollständigen Termin; fehlende Felder führen zu keinem
+  Absturz, sondern zu einem Prüfhinweis): `Unternehmensname`, `Straße`,
+  `PLZ`, `Ort`, `Termin_Datum`, `Termin_Uhrzeit`
 - Optional: `DIRS21-ID`, `Termin_bis`, `Termin_Status` (`fix` / `flexibel` /
   leer = Standardtermin), `Flexibel_von`, `Flexibel_bis`,
   `Termin_Dauer_Minuten` (Standard: 60 Minuten, zentral in `config.yaml` ->
-  `routenplanung.standard_termin_dauer_minuten` konfigurierbar), `Priorität`
-  (A-D), `Bemerkung`. Fehlende optionale Felder verursachen keinen Fehler.
+  `routenplanung.standard_termin_dauer_minuten` konfigurierbar),
+  `Gesamtpriorität` (A-D), `Fachliche_Top_Empfehlung`, `Bemerkung`.
 
 **Grundregel:** Kundenverfügbarkeit > Terminrestriktionen > wirtschaftliche
 Priorität > Fahrtzeitoptimierung. **Fixe Termine** (`Termin_Status = fix`)

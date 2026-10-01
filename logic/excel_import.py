@@ -10,7 +10,11 @@ das Mapping erfolgt deshalb ausschließlich über config.yaml, nicht im Code.
 import pandas as pd
 
 REQUIRED_FIELDS = ("hotel_name", "website")
-OPTIONAL_FIELDS = ("ort", "zimmeranzahl", "adressgruppe", "dirs21_id", "record_id")
+# strasse/plz sind bewusst NUR optionale Zusatzfelder für die Adress-
+# Vorbefüllung im Reiter "Routenplanung" (siehe logic/pipeline.py -
+# RESULT_COLUMNS enthält sie NICHT, die Sales-Intelligence-Auswertung und
+# der zugehörige Excel-Export bleiben davon unberührt).
+OPTIONAL_FIELDS = ("ort", "zimmeranzahl", "adressgruppe", "dirs21_id", "record_id", "strasse", "plz")
 ALL_FIELDS = REQUIRED_FIELDS + OPTIONAL_FIELDS
 
 

@@ -1,28 +1,46 @@
 """
-Routenplanung-Excel-Import für DIRS21 Sales Intelligence.
+Termin-Datenmodell + optionaler Excel-Import für die Routenplanung (DIRS21
+Sales Intelligence).
 
-Liest das separate Tabellenblatt "Routenplanung" (Name konfigurierbar über
-config.yaml -> routenplanung.excel.sheet_name) aus DERSELBEN hochgeladenen
-Excel-Datei wie die Sales-Intelligence-Daten ein (siehe logic/excel_import.py).
-Die beiden Tabellenblätter sind bewusst getrennt - dieses Modul fasst die
-Sales-Intelligence-Tabelle an keiner Stelle an.
+Termine werden PRIMÄR direkt in der Webapp angelegt (siehe
+app.py -> render_routenplanung_tab, build_termin() unten) und nur für die
+laufende Session im Streamlit Session State gehalten. Das separate
+Tabellenblatt "Routenplanung" (Name konfigurierbar über config.yaml ->
+routenplanung.excel.sheet_name) in der hochgeladenen Excel-Datei ist
+OPTIONAL - falls vorhanden, können daraus vorhandene Termine importiert
+werden (siehe read_route_termine()). Die Sales-Intelligence-Tabelle wird von
+diesem Modul an keiner Stelle angefasst.
+
+build_termin() und read_route_termine() erzeugen beide exakt dieselbe
+Termin-Dict-Form (siehe build_termin()-Docstring), damit
+logic/route_planner.py nicht unterscheiden muss, ob ein Termin manuell in
+der Webapp angelegt oder aus einem Excel-Blatt importiert wurde.
 
 Pflichtfelder (siehe Auftrag): Unternehmensname, Straße, PLZ, Ort,
-Termin_Datum, Termin_Uhrzeit. Fehlt eines davon in einer Zeile, wird der
-Termin trotzdem übernommen, aber über "pruefhinweis_import" markiert -
-andere Termine werden davon nicht beeinträchtigt (siehe Auftrag Abschnitt 25).
+Termin_Datum, Termin_Uhrzeit. Fehlt eines davon, wird der Termin trotzdem
+übernommen, aber über "pruefhinweis_import" markiert - andere Termine werden
+davon nicht beeinträchtigt (siehe Auftrag Abschnitt 26).
 """
 
 import datetime as dt
+import uuid
 
 import pandas as pd
 
 REQUIRED_FIELDS = ("hotel_name", "strasse", "plz", "ort", "termin_datum", "termin_uhrzeit")
 OPTIONAL_FIELDS = (
     "dirs21_id", "termin_bis", "termin_status", "flexibel_von", "flexibel_bis",
-    "termin_dauer_minuten", "prioritaet", "bemerkung",
+    "termin_dauer_minuten", "prioritaet", "fachliche_top_empfehlung", "bemerkung",
 )
 ALL_FIELDS = REQUIRED_FIELDS + OPTIONAL_FIELDS
+
+
+def next_termin_id() -> str:
+    """Erzeugt eine eindeutige ID für einen in der Webapp angelegten Termin
+    (siehe build_termin()) - ermöglicht Bearbeiten/Löschen eines einzelnen
+    Termins in st.session_state, unabhängig von seiner Position in der
+    Liste."""
+    return uuid.uuid4().hex[:8]
 
 DATE_FIELDS = {"termin_datum"}
 TIME_FIELDS = {"termin_uhrzeit", "termin_bis", "flexibel_von", "flexibel_bis"}
@@ -122,20 +140,114 @@ def _normalize_status(value) -> str:
     return TERMIN_STATUS_STANDARD
 
 
+def _validate_termin(termin: dict) -> str:
+    """Prüft die Pflichtfelder (siehe Auftrag) und gibt einen kombinierten
+    Prüfhinweis zurück ("" wenn alles vorhanden) - wird sowohl beim
+    Excel-Import als auch beim manuellen Anlegen in der Webapp verwendet."""
+    pruefhinweise = []
+    if not termin["hotel_name"]:
+        pruefhinweise.append("Unternehmensname fehlt.")
+    if not termin["strasse"]:
+        pruefhinweise.append("Straße fehlt.")
+    if not termin["plz"]:
+        pruefhinweise.append("PLZ fehlt.")
+    if not termin["ort"]:
+        pruefhinweise.append("Ort fehlt.")
+    if not termin["termin_datum"]:
+        pruefhinweise.append("Termin_Datum fehlt oder nicht interpretierbar.")
+    if not termin["termin_uhrzeit"]:
+        pruefhinweise.append("Termin_Uhrzeit fehlt oder nicht interpretierbar.")
+    if (
+        termin["termin_status"] == TERMIN_STATUS_FLEXIBEL
+        and not (termin["flexibel_von"] and termin["flexibel_bis"])
+    ):
+        pruefhinweise.append(
+            "Termin_Status 'flexibel' ohne vollständiges Zeitfenster (Flexibel_von/Flexibel_bis)."
+        )
+    return " | ".join(pruefhinweise)
+
+
+def _build_adresse(termin: dict) -> str:
+    return ", ".join(
+        teil for teil in (termin["strasse"], f"{termin['plz']} {termin['ort']}".strip()) if teil
+    )
+
+
+def build_termin(
+    hotel_name: str, strasse: str, plz: str, ort: str,
+    termin_datum, termin_uhrzeit, *,
+    dirs21_id: str = "", termin_bis=None, termin_status: str = TERMIN_STATUS_STANDARD,
+    flexibel_von=None, flexibel_bis=None, termin_dauer_minuten=None,
+    prioritaet: str = "", fachliche_top_empfehlung: str = "", bemerkung: str = "",
+    termin_id: str = None,
+) -> dict:
+    """
+    Baut einen Termin-Dict in GENAU der Form, die logic/route_planner.py
+    erwartet - unabhängig davon, ob der Termin direkt in der Webapp angelegt
+    (siehe app.py -> render_routenplanung_tab) oder aus einem Excel-Blatt
+    importiert wurde (siehe read_route_termine()). Erwartet bereits
+    "fertige" Werte (z.B. echte datetime.date/datetime.time-Objekte aus
+    Streamlit-Widgets) - keine Excel-Zellwert-Interpretation wie parse_date/
+    parse_time, die ist ausschließlich für den Excel-Import nötig.
+
+    termin_id: eindeutige ID zur Identifikation in st.session_state für
+    Bearbeiten/Löschen (siehe next_termin_id()). Für importierte Termine wird
+    stattdessen "zeilennummer" verwendet.
+
+    prioritaet/fachliche_top_empfehlung sind reine, zum Anlagezeitpunkt aus
+    Sales Intelligence übernommene Dokumentationsfelder (siehe Auftrag
+    Abschnitt 3/18) - sie werden NIE automatisch neu berechnet und
+    überschreiben keinen fest vereinbarten Termin.
+    """
+    termin = {
+        "termin_id": termin_id,
+        "zeilennummer": None,
+        "hotel_name": _clean_text(hotel_name),
+        "dirs21_id": _clean_text(dirs21_id),
+        "strasse": _clean_text(strasse),
+        "plz": _clean_text(plz),
+        "ort": _clean_text(ort),
+        "termin_datum": termin_datum,
+        "termin_uhrzeit": termin_uhrzeit,
+        "termin_bis": termin_bis,
+        "termin_status": termin_status or TERMIN_STATUS_STANDARD,
+        "flexibel_von": flexibel_von,
+        "flexibel_bis": flexibel_bis,
+        "termin_dauer_minuten": termin_dauer_minuten,
+        "prioritaet": prioritaet if prioritaet in ("A", "B", "C", "D") else "",
+        "fachliche_top_empfehlung": _clean_text(fachliche_top_empfehlung),
+        "bemerkung": _clean_text(bemerkung),
+    }
+    termin["pruefhinweis_import"] = _validate_termin(termin)
+    termin["adresse_vollstaendig"] = _build_adresse(termin)
+    return termin
+
+
+def revalidate_termin(termin: dict) -> None:
+    """Aktualisiert "pruefhinweis_import"/"adresse_vollstaendig" NACH
+    manuellen Änderungen an einem bestehenden Termin-Dict (siehe app.py -
+    Bearbeiten eines bereits angelegten Termins in der Terminliste). Ändert
+    den Termin sonst nicht - reine Neuberechnung der abgeleiteten Felder."""
+    termin["pruefhinweis_import"] = _validate_termin(termin)
+    termin["adresse_vollstaendig"] = _build_adresse(termin)
+
+
 def read_route_termine(excel_path, config: dict) -> list:
     """
-    Liest das Routenplanung-Tabellenblatt ein und gibt eine Liste von Dicts
-    zurück, je einen Termin (Reihenfolge wie in der Eingabedatei):
-    {hotel_name, dirs21_id, strasse, plz, ort, termin_datum (date|None),
-     termin_uhrzeit (time|None), termin_bis (time|None),
-     termin_status ("fix"|"flexibel"|""), flexibel_von (time|None),
-     flexibel_bis (time|None), termin_dauer_minuten (int|None),
-     prioritaet, bemerkung, zeilennummer, pruefhinweis_import}
+    Liest - FALLS VORHANDEN - das optionale Routenplanung-Tabellenblatt ein
+    und gibt eine Liste von Dicts zurück, je einen Termin (Reihenfolge wie in
+    der Eingabedatei), in exakt derselben Form wie build_termin():
+    {termin_id (None, siehe "zeilennummer"), hotel_name, dirs21_id, strasse,
+     plz, ort, termin_datum (date|None), termin_uhrzeit (time|None),
+     termin_bis (time|None), termin_status ("fix"|"flexibel"|""),
+     flexibel_von (time|None), flexibel_bis (time|None),
+     termin_dauer_minuten (int|None), prioritaet, fachliche_top_empfehlung,
+     bemerkung, zeilennummer, pruefhinweis_import, adresse_vollstaendig}
 
-    Existiert das konfigurierte Tabellenblatt nicht (z.B. weil die
-    hochgeladene Datei noch keine Routenplanung enthält), wird eine leere
-    Liste zurückgegeben - kein Fehler, kein Absturz (siehe Auftrag:
-    "Routenplanung" ist ein optionaler, eigenständiger Funktionsbereich).
+    Existiert das konfigurierte Tabellenblatt nicht (z.B. weil der Nutzer
+    alle Termine direkt in der Webapp anlegt, siehe Auftrag Abschnitt 20),
+    wird eine leere Liste zurückgegeben - kein Fehler, kein Absturz. Das
+    Tabellenblatt ist eine rein optionale Import-Möglichkeit.
     """
     route_cfg = (config.get("routenplanung") or {}).get("excel") or {}
     sheet_name = route_cfg.get("sheet_name", "Routenplanung")
@@ -178,30 +290,9 @@ def read_route_termine(excel_path, config: dict) -> list:
         if not termin["hotel_name"] and not termin["strasse"] and not termin["termin_datum"]:
             continue
 
-        pruefhinweise = []
-        if not termin["hotel_name"]:
-            pruefhinweise.append("Unternehmensname fehlt.")
-        if not termin["strasse"]:
-            pruefhinweise.append("Straße fehlt.")
-        if not termin["plz"]:
-            pruefhinweise.append("PLZ fehlt.")
-        if not termin["ort"]:
-            pruefhinweise.append("Ort fehlt.")
-        if not termin["termin_datum"]:
-            pruefhinweise.append("Termin_Datum fehlt oder nicht interpretierbar.")
-        if not termin["termin_uhrzeit"]:
-            pruefhinweise.append("Termin_Uhrzeit fehlt oder nicht interpretierbar.")
-        if (
-            termin["termin_status"] == TERMIN_STATUS_FLEXIBEL
-            and not (termin["flexibel_von"] and termin["flexibel_bis"])
-        ):
-            pruefhinweise.append(
-                "Termin_Status 'flexibel' ohne vollständiges Zeitfenster (Flexibel_von/Flexibel_bis)."
-            )
-        termin["pruefhinweis_import"] = " | ".join(pruefhinweise)
-        termin["adresse_vollstaendig"] = ", ".join(
-            teil for teil in (termin["strasse"], f"{termin['plz']} {termin['ort']}".strip()) if teil
-        )
+        termin["termin_id"] = None  # importierte Termine identifizieren sich über "zeilennummer"
+        termin["pruefhinweis_import"] = _validate_termin(termin)
+        termin["adresse_vollstaendig"] = _build_adresse(termin)
 
         termine.append(termin)
 

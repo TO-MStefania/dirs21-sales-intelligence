@@ -21,6 +21,7 @@ DIRS21-Erkennungslogik liegt unverändert in logic/ (siehe dort).
 """
 
 import datetime as dt
+import hashlib
 import io
 
 import pandas as pd
@@ -38,7 +39,13 @@ from logic.pipeline import FIT_BEGRUENDUNG_COLUMNS, RESULT_COLUMNS, analyze_comp
 from logic.scoring import fit_band
 from logic import geocoding as geocoding_module
 from logic import routing_provider
-from logic.route_import import RouteImportError, read_route_termine
+from logic.route_import import (
+    RouteImportError,
+    build_termin,
+    next_termin_id,
+    read_route_termine,
+    revalidate_termin,
+)
 from logic.route_planner import (
     available_dates,
     compare_routes,
@@ -681,9 +688,12 @@ def render_sales_intelligence_tab(config: dict, uploaded_file) -> None:
 # ---------------------------------------------------------------------------
 # Reiter 2: Routenplanung (siehe logic/route_planner.py, logic/geocoding.py,
 # logic/routing_provider.py, logic/route_import.py). Eigenständiger
-# Funktionsbereich - liest Sales-Intelligence-Analyseergebnisse (sofern im
-# Reiter 1 bereits analysiert) nur LESEND für Zusatzvorschläge, verändert
-# dort nichts.
+# Funktionsbereich. Termine werden PRIMÄR direkt in der Webapp angelegt und
+# für die laufende Session in st.session_state["route_termine"] gehalten -
+# ein Tabellenblatt "Routenplanung" in der hochgeladenen Datei ist nur eine
+# OPTIONALE Import-Möglichkeit (siehe _importiere_routenplanung_sheet_falls_vorhanden).
+# Liest Sales-Intelligence-Analyseergebnisse (sofern im Reiter 1 bereits
+# analysiert) nur LESEND für Auswahl/Vorschläge, verändert dort nichts.
 # ---------------------------------------------------------------------------
 ENDE_MODUS_OPTIONEN = {
     "Letzter Termin": "letzter_termin",
@@ -692,10 +702,275 @@ ENDE_MODUS_OPTIONEN = {
 }
 
 ROUTE_TERMIN_STATUS_LABELS = {"fix": "fix", "flexibel": "flexibel", "": "Standard"}
+ROUTE_FORM_MANUELL_LABEL = "— manuell eingeben (nicht in der Liste) —"
+ROUTE_STATUS_LABEL_ZU_WERT = {"Standard": "", "Fix": "fix", "Flexibel": "flexibel"}
+ROUTE_STATUS_WERT_ZU_LABEL = {"": "Standard", "fix": "Fix", "flexibel": "Flexibel"}
 
 
 def _format_zeit(value) -> str:
     return value.strftime("%H:%M") if value else "–"
+
+
+def _termin_key(termin: dict) -> str:
+    """Eindeutiger Schlüssel für Bearbeiten/Löschen in der Terminliste -
+    manuell angelegte Termine tragen bereits eine termin_id (siehe
+    logic/route_import.next_termin_id()), importierte Termine identifizieren
+    sich über ihre ursprüngliche Zeilennummer."""
+    return termin.get("termin_id") or f"import-{termin.get('zeilennummer')}"
+
+
+def _sales_company_options() -> list:
+    """Baut die Liste auswählbarer Unternehmen aus den bereits im Reiter
+    "Sales Intelligence" geladenen Daten (siehe Auftrag Abschnitt 2). Straße/
+    PLZ stammen - falls im Excel-Export vorhanden - aus den ursprünglichen,
+    nur im Session State gehaltenen Rohdaten (logic/excel_import.py) und
+    NICHT aus RESULT_COLUMNS, damit die Sales-Intelligence-Tabelle dadurch
+    nicht erweitert wird (siehe Auftrag Abschnitt 24). analyzed_companies und
+    result_rows werden im Reiter "Sales Intelligence" immer gemeinsam, in
+    derselben Reihenfolge befüllt (siehe render_sales_intelligence_tab)."""
+    companies = st.session_state.get("analyzed_companies") or []
+    result_rows = st.session_state.get("result_rows") or []
+    optionen = []
+    for company, row in zip(companies, result_rows):
+        name = row.get("hotel_name") or company.get("hotel_name", "")
+        if not name:
+            continue
+        optionen.append({
+            "hotel_name": name,
+            "dirs21_id": row.get("dirs21_id", ""),
+            "ort": row.get("ort", ""),
+            "strasse": company.get("strasse", ""),
+            "plz": company.get("plz", ""),
+            "gesamtprioritaet": row.get("gesamtprioritaet", ""),
+            "fachliche_top_empfehlung": row.get("fachliche_top_empfehlung", ""),
+        })
+    return optionen
+
+
+def _on_route_form_company_change() -> None:
+    """Callback der Unternehmensauswahl im "Termin hinzufügen"-Formular -
+    übernimmt Ort/Straße/PLZ des ausgewählten Unternehmens automatisch (siehe
+    Auftrag Abschnitt 3). Läuft VOR dem eigentlichen Rerun, deshalb über
+    st.session_state statt über Rückgabewerte."""
+    auswahl = st.session_state.get("route_form_unternehmen")
+    optionen = st.session_state.get("_route_form_optionen", [])
+    passendes = next((o for o in optionen if o["hotel_name"] == auswahl), None)
+    if passendes:
+        st.session_state["route_form_strasse"] = passendes.get("strasse", "")
+        st.session_state["route_form_plz"] = passendes.get("plz", "")
+        st.session_state["route_form_ort"] = passendes.get("ort", "")
+
+
+def _render_termin_hinzufuegen_formular(config: dict) -> None:
+    """"Termin hinzufügen" (siehe Auftrag Abschnitt 3) - bewusst OHNE
+    st.form, da die Unternehmensauswahl die Adressfelder sofort (bei
+    Auswahländerung) vorbefüllen soll; st.form würde alle Eingaben erst beim
+    Absenden verarbeiten."""
+    st.markdown('<div class="d21-section-title">Termin hinzufügen</div>', unsafe_allow_html=True)
+
+    # Formularfelder vom VORHERIGEN Absenden zurücksetzen - muss vor dem
+    # Erzeugen der Widgets passieren, da Streamlit st.session_state[key]
+    # NICHT mehr beschreibbar ist, sobald das Widget mit diesem Schlüssel in
+    # diesem Lauf bereits erzeugt wurde (siehe Submit-Handler weiter unten).
+    if st.session_state.pop("_route_form_reset_pending", False):
+        for key in ("route_form_strasse", "route_form_plz", "route_form_ort", "route_form_bemerkung"):
+            st.session_state.pop(key, None)
+
+    optionen = _sales_company_options()
+    st.session_state["_route_form_optionen"] = optionen
+    if not optionen:
+        st.caption(
+            "Noch keine Sales-Intelligence-Analyse vorhanden - Unternehmen können trotzdem manuell "
+            "eingegeben werden."
+        )
+    auswahl_optionen = [ROUTE_FORM_MANUELL_LABEL] + [o["hotel_name"] for o in optionen]
+
+    st.selectbox(
+        "Unternehmen", auswahl_optionen, key="route_form_unternehmen",
+        on_change=_on_route_form_company_change,
+    )
+    ausgewaehlt = st.session_state.get("route_form_unternehmen", ROUTE_FORM_MANUELL_LABEL)
+    ist_manuell = ausgewaehlt == ROUTE_FORM_MANUELL_LABEL
+
+    manueller_name = ""
+    if ist_manuell:
+        manueller_name = st.text_input("Unternehmensname", key="route_form_manueller_name")
+
+    c1, c2, c3 = st.columns(3)
+    strasse = c1.text_input("Straße", key="route_form_strasse")
+    plz = c2.text_input("PLZ", key="route_form_plz")
+    ort = c3.text_input("Ort", key="route_form_ort")
+
+    c4, c5, c6 = st.columns(3)
+    termin_datum = c4.date_input("Termin_Datum", key="route_form_datum")
+    termin_uhrzeit = c5.time_input("Termin_Uhrzeit", key="route_form_uhrzeit")
+    dauer_default = get_standard_dauer_minuten(config)
+    dauer = c6.number_input(
+        "Termin_Dauer_Minuten", min_value=0, value=0, step=15,
+        help=f"0 = zentraler Standardwert verwenden ({dauer_default} Minuten).",
+        key="route_form_dauer",
+    )
+
+    status_label = st.radio(
+        "Termin_Status", list(ROUTE_STATUS_LABEL_ZU_WERT.keys()), horizontal=True, key="route_form_status",
+        help="Fix: Uhrzeit bleibt unveränderbar. Flexibel: nur innerhalb Flexibel_von/Flexibel_bis planbar. "
+             "Standard: Uhrzeit bleibt ebenfalls erhalten, nur Hinweise auf Optimierungspotenzial.",
+    )
+    flexibel_von = flexibel_bis = None
+    if status_label == "Flexibel":
+        cf1, cf2 = st.columns(2)
+        flexibel_von = cf1.time_input("Flexibel_von", key="route_form_flex_von")
+        flexibel_bis = cf2.time_input("Flexibel_bis", key="route_form_flex_bis")
+
+    bemerkung = st.text_area("Bemerkung", key="route_form_bemerkung")
+
+    if st.button("Termin hinzufügen", type="primary", key="route_form_submit"):
+        passendes = next((o for o in optionen if o["hotel_name"] == ausgewaehlt), None) if not ist_manuell else None
+        hotel_name = manueller_name if ist_manuell else ausgewaehlt
+
+        neuer_termin = build_termin(
+            hotel_name=hotel_name, strasse=strasse, plz=plz, ort=ort,
+            termin_datum=termin_datum, termin_uhrzeit=termin_uhrzeit,
+            dirs21_id=(passendes or {}).get("dirs21_id", ""),
+            termin_status=ROUTE_STATUS_LABEL_ZU_WERT[status_label],
+            flexibel_von=flexibel_von, flexibel_bis=flexibel_bis,
+            termin_dauer_minuten=int(dauer) if dauer > 0 else None,
+            prioritaet=(passendes or {}).get("gesamtprioritaet", ""),
+            fachliche_top_empfehlung=(passendes or {}).get("fachliche_top_empfehlung", ""),
+            bemerkung=bemerkung, termin_id=next_termin_id(),
+        )
+        st.session_state["route_termine"].append(neuer_termin)
+        if neuer_termin["pruefhinweis_import"]:
+            st.warning(f"Termin gespeichert, aber unvollständig: {neuer_termin['pruefhinweis_import']}")
+        else:
+            st.success(f"Termin für {hotel_name or '(ohne Namen)'} hinzugefügt.")
+        # Adress-/Bemerkungsfelder für den nächsten Termin zurücksetzen -
+        # Datum/Uhrzeit/Status bleiben bewusst erhalten, da häufig mehrere
+        # Termine desselben Tages hintereinander angelegt werden. Das
+        # eigentliche Zurücksetzen passiert erst am Anfang des NÄCHSTEN
+        # Laufs (siehe oben), da die Widgets in diesem Lauf bereits erzeugt
+        # wurden und ihr session_state-Wert hier nicht mehr überschrieben
+        # werden darf.
+        st.session_state["_route_form_reset_pending"] = True
+        st.rerun()
+
+
+def _render_termin_bearbeiten_formular(termin: dict, tid: str) -> None:
+    """Inline-Bearbeitung eines bestehenden Termins (siehe Auftrag Abschnitt
+    6) - ändert den Termin-Dict direkt (dieselbe Objektreferenz wie in
+    st.session_state["route_termine"]), kein separates Speichern nötig."""
+    with st.container(border=True):
+        st.markdown("**Termin bearbeiten**")
+        c1, c2, c3 = st.columns(3)
+        termin["strasse"] = c1.text_input("Straße", value=termin.get("strasse", ""), key=f"bearb_strasse_{tid}")
+        termin["plz"] = c2.text_input("PLZ", value=termin.get("plz", ""), key=f"bearb_plz_{tid}")
+        termin["ort"] = c3.text_input("Ort", value=termin.get("ort", ""), key=f"bearb_ort_{tid}")
+
+        c4, c5, c6 = st.columns(3)
+        termin["termin_datum"] = c4.date_input(
+            "Termin_Datum", value=termin.get("termin_datum") or dt.date.today(), key=f"bearb_datum_{tid}",
+        )
+        termin["termin_uhrzeit"] = c5.time_input(
+            "Termin_Uhrzeit", value=termin.get("termin_uhrzeit") or dt.time(9, 0), key=f"bearb_uhrzeit_{tid}",
+        )
+        neue_dauer = c6.number_input(
+            "Termin_Dauer_Minuten", min_value=0, value=termin.get("termin_dauer_minuten") or 0, step=15,
+            key=f"bearb_dauer_{tid}",
+        )
+        termin["termin_dauer_minuten"] = neue_dauer if neue_dauer > 0 else None
+
+        aktuelles_label = ROUTE_STATUS_WERT_ZU_LABEL.get(termin.get("termin_status", ""), "Standard")
+        status_optionen = list(ROUTE_STATUS_LABEL_ZU_WERT.keys())
+        neues_label = st.radio(
+            "Termin_Status", status_optionen, index=status_optionen.index(aktuelles_label),
+            horizontal=True, key=f"bearb_status_{tid}",
+        )
+        termin["termin_status"] = ROUTE_STATUS_LABEL_ZU_WERT[neues_label]
+
+        if termin["termin_status"] == "flexibel":
+            cf1, cf2 = st.columns(2)
+            termin["flexibel_von"] = cf1.time_input(
+                "Flexibel_von", value=termin.get("flexibel_von") or termin["termin_uhrzeit"], key=f"bearb_flexvon_{tid}",
+            )
+            termin["flexibel_bis"] = cf2.time_input(
+                "Flexibel_bis", value=termin.get("flexibel_bis") or termin["termin_uhrzeit"], key=f"bearb_flexbis_{tid}",
+            )
+        else:
+            termin["flexibel_von"] = None
+            termin["flexibel_bis"] = None
+
+        termin["bemerkung"] = st.text_area("Bemerkung", value=termin.get("bemerkung", ""), key=f"bearb_bemerkung_{tid}")
+
+        if st.button("Fertig", key=f"bearb_fertig_{tid}"):
+            revalidate_termin(termin)
+            st.session_state["route_editing_termin_id"] = None
+            st.rerun()
+
+
+def _render_terminliste(alle_termine: list) -> None:
+    """Übersichtliche, bearbeitbare Terminliste (siehe Auftrag Abschnitt 6) -
+    zeigt ALLE angelegten Termine (nicht nur die des gewählten Tourdatums),
+    damit auch Termine anderer Tage verwaltet werden können."""
+    editing_id = st.session_state.get("route_editing_termin_id")
+    sortiert = sorted(
+        alle_termine,
+        key=lambda t: (t.get("termin_datum") or dt.date.max, t.get("termin_uhrzeit") or dt.time.max),
+    )
+    for termin in sortiert:
+        tid = _termin_key(termin)
+        status_label = ROUTE_STATUS_WERT_ZU_LABEL.get(termin.get("termin_status", ""), "Standard")
+        datum_str = termin["termin_datum"].strftime("%d.%m.%Y") if termin.get("termin_datum") else "–"
+        zeit_str = termin["termin_uhrzeit"].strftime("%H:%M") if termin.get("termin_uhrzeit") else "–"
+        with st.container(border=True):
+            cols = st.columns([1.1, 2.2, 1.6, 1, 0.8, 0.8, 1.1, 0.5, 0.5])
+            cols[0].markdown(f"**{zeit_str}**")
+            cols[1].markdown(termin.get("hotel_name") or "(ohne Namen)")
+            cols[2].markdown(termin.get("ort") or "–")
+            cols[3].markdown(status_label)
+            cols[4].markdown(f"{termin.get('termin_dauer_minuten') or '–'}")
+            cols[5].markdown(termin.get("prioritaet") or "–")
+            cols[6].markdown(datum_str)
+            if cols[7].button("✏️", key=f"edit_{tid}", help="Bearbeiten"):
+                st.session_state["route_editing_termin_id"] = None if editing_id == tid else tid
+                st.rerun()
+            if cols[8].button("🗑️", key=f"delete_{tid}", help="Löschen"):
+                st.session_state["route_termine"] = [
+                    t for t in st.session_state["route_termine"] if _termin_key(t) != tid
+                ]
+                if editing_id == tid:
+                    st.session_state["route_editing_termin_id"] = None
+                st.rerun()
+            if termin.get("pruefhinweis_import"):
+                st.caption(f"⚠️ {termin['pruefhinweis_import']}")
+            if editing_id == tid:
+                _render_termin_bearbeiten_formular(termin, tid)
+
+
+def _importiere_routenplanung_sheet_falls_vorhanden(uploaded_bytes, config: dict) -> None:
+    """Optionaler Import (siehe Auftrag Abschnitt 20): Enthält die
+    hochgeladene Datei bereits ein Tabellenblatt "Routenplanung", werden
+    dessen Termine EINMALIG pro hochgeladener Datei in
+    st.session_state["route_termine"] übernommen - erkannt über einen
+    einfachen Hash der Rohbytes, damit ein erneutes Rendern/Filtern nicht
+    wiederholt importiert. Kein Tabellenblatt vorhanden -> kein Fehler,
+    Termine können vollständig manuell in der Webapp gepflegt werden."""
+    if not uploaded_bytes:
+        return
+    datei_hash = hashlib.md5(uploaded_bytes).hexdigest()
+    if st.session_state.get("route_sheet_imported_hash") == datei_hash:
+        return
+    st.session_state["route_sheet_imported_hash"] = datei_hash
+    try:
+        importierte = read_route_termine(io.BytesIO(uploaded_bytes), config)
+    except RouteImportError as exc:
+        st.error(f"Fehler beim Einlesen des optionalen Tabellenblatts \"Routenplanung\": {exc}")
+        return
+    if importierte:
+        st.session_state["route_termine"].extend(importierte)
+        st.success(
+            f"{len(importierte)} Termin(e) aus dem vorhandenen Tabellenblatt \"Routenplanung\" übernommen - "
+            "können unten bearbeitet werden."
+        )
 
 
 def _render_route_kpis(route: dict) -> None:
@@ -861,35 +1136,61 @@ def _route_ergebnis_dataframe(route: dict) -> pd.DataFrame:
                 round(stop["distanz_km_vom_vorherigen"], 1) if stop["distanz_km_vom_vorherigen"] is not None else ""
             ),
             "Gesamtpriorität": stop.get("prioritaet", ""),
-            "Fachliche_Top_Empfehlung": (stop.get("sales_match") or {}).get("fachliche_top_empfehlung", ""),
+            "Fachliche_Top_Empfehlung": (
+                (stop.get("sales_match") or {}).get("fachliche_top_empfehlung") or stop.get("fachliche_top_empfehlung", "")
+            ),
             "Hinweis": " | ".join(([stop["kritisch_hinweis"]] if stop["kritisch"] else []) + stop.get("pruefhinweise", [])),
         })
     return pd.DataFrame(rows)
 
 
+def _route_input_dataframe(alle_termine: list) -> pd.DataFrame:
+    """Baut das Tabellenblatt "Routenplanung" für den Export (siehe Auftrag
+    Abschnitt 22) DIREKT aus den in der Webapp gepflegten Terminen - dient
+    als Dokumentation aller eingegebenen Termine (alle Tage, nicht nur das
+    aktuell gewählte Tourdatum)."""
+    rows = []
+    for t in alle_termine:
+        rows.append({
+            "Unternehmensname": t.get("hotel_name", ""),
+            "DIRS21-ID": t.get("dirs21_id", ""),
+            "Straße": t.get("strasse", ""),
+            "PLZ": t.get("plz", ""),
+            "Ort": t.get("ort", ""),
+            "Termin_Datum": t["termin_datum"].strftime("%d.%m.%Y") if t.get("termin_datum") else "",
+            "Termin_Uhrzeit": _format_zeit(t.get("termin_uhrzeit")),
+            "Termin_bis": _format_zeit(t.get("termin_bis")) if t.get("termin_bis") else "",
+            "Termin_Status": t.get("termin_status") or "standard",
+            "Flexibel_von": _format_zeit(t.get("flexibel_von")) if t.get("flexibel_von") else "",
+            "Flexibel_bis": _format_zeit(t.get("flexibel_bis")) if t.get("flexibel_bis") else "",
+            "Termin_Dauer_Minuten": t.get("termin_dauer_minuten") or "",
+            "Gesamtpriorität": t.get("prioritaet", ""),
+            "Fachliche_Top_Empfehlung": t.get("fachliche_top_empfehlung", ""),
+            "Bemerkung": t.get("bemerkung", ""),
+        })
+    return pd.DataFrame(rows)
+
+
 def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
-    """uploaded_bytes: Rohbytes der hochgeladenen Excel-Datei (siehe main()) -
-    wird für jeden unabhängigen Lesevorgang frisch in io.BytesIO gepackt,
-    da ein einzelnes Datei-/Stream-Objekt kein zweites Mal gelesen werden
-    könnte (diese Funktion liest die Datei an zwei Stellen: Termine + später
-    das unveränderte Routenplanung-Blatt für den Export)."""
-    if not uploaded_bytes:
-        st.info("Bitte oben eine Excel-Datei hochladen (Tabellenblatt \"Routenplanung\", siehe README).")
-        return
+    """Workflow (siehe Auftrag): Unternehmen aus Sales Intelligence auswählen
+    -> Termin direkt in der Webapp anlegen -> weitere Termine hinzufügen ->
+    Route optimieren -> Ergebnis anzeigen -> Excel herunterladen. Ein
+    Tabellenblatt "Routenplanung" in der Excel-Datei ist dafür NICHT
+    erforderlich (nur optional importierbar, siehe
+    _importiere_routenplanung_sheet_falls_vorhanden)."""
+    st.session_state.setdefault("route_termine", [])
+    _importiere_routenplanung_sheet_falls_vorhanden(uploaded_bytes, config)
 
-    try:
-        alle_termine = read_route_termine(io.BytesIO(uploaded_bytes), config)
-    except RouteImportError as exc:
-        st.error(f"Fehler beim Einlesen des Tabellenblatts \"Routenplanung\": {exc}")
-        return
+    _render_termin_hinzufuegen_formular(config)
 
+    alle_termine = st.session_state["route_termine"]
+    st.markdown('<div class="d21-section-title">Termine</div>', unsafe_allow_html=True)
     if not alle_termine:
-        st.info(
-            "Kein Tabellenblatt \"Routenplanung\" mit Terminen in dieser Datei gefunden. "
-            "Lege ein Tabellenblatt mit diesem Namen an (siehe README) und lade die Datei erneut hoch."
-        )
+        st.info("Noch keine Termine angelegt. Nutze das Formular oben, um den ersten Termin hinzuzufügen.")
         return
+    _render_terminliste(alle_termine)
 
+    st.markdown('<div class="d21-section-title">Tour berechnen</div>', unsafe_allow_html=True)
     if not routing_provider.is_configured():
         st.warning(
             "Keine Routing-API konfiguriert (Secret/Umgebungsvariable `ROUTING_API_KEY`). "
@@ -921,7 +1222,7 @@ def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
 
     unvollstaendig = [t for t in termine_tag if t.get("pruefhinweis_import")]
     if unvollstaendig:
-        with st.expander(f"{len(unvollstaendig)} Termin(e) mit Prüfhinweis beim Import", expanded=False):
+        with st.expander(f"{len(unvollstaendig)} Termin(e) mit Prüfhinweis", expanded=False):
             for t in unvollstaendig:
                 st.warning(f"{t.get('hotel_name') or '(ohne Namen)'}: {t['pruefhinweis_import']}", icon="⚠️")
 
@@ -929,7 +1230,7 @@ def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
         st.info("Bitte eine Startadresse eingeben, um die Tagesroute zu berechnen.")
         return
 
-    if st.button("Route berechnen", type="primary"):
+    if st.button("Route optimieren", type="primary"):
         st.session_state["route_geocode_cache"] = st.session_state.get("route_geocode_cache", {})
         travel_fn = routing_provider.get_pairwise if routing_provider.is_configured() else None
 
@@ -970,11 +1271,7 @@ def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
     st.markdown('<div class="d21-section-title">Excel-Export</div>', unsafe_allow_html=True)
     sales_rows = st.session_state.get("result_rows")
     sales_df = pd.DataFrame(sales_rows, columns=RESULT_COLUMNS) if sales_rows else pd.DataFrame(columns=RESULT_COLUMNS)
-    try:
-        route_sheet_name = (config.get("routenplanung") or {}).get("excel", {}).get("sheet_name", "Routenplanung")
-        route_input_df = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name=route_sheet_name)
-    except Exception:
-        route_input_df = None
+    route_input_df = _route_input_dataframe(alle_termine)
     route_ergebnis_df = _route_ergebnis_dataframe(optimiert)
     workbook_bytes = export_workbook_bytes(sales_df, route_input_df, route_ergebnis_df)
     st.download_button(
@@ -984,8 +1281,8 @@ def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     st.caption(
-        "Enthält das unveränderte Tabellenblatt \"Routenplanung\" plus ein neues Tabellenblatt "
-        "\"Routen-Ergebnis\" mit der berechneten Tour - die Sales-Intelligence-Tabelle bleibt unverändert."
+        "Enthält \"Sales Intelligence\", \"Routenplanung\" (alle in der Webapp angelegten Termine) und "
+        "\"Routen-Ergebnis\" (die berechnete Tour für das gewählte Datum) als getrennte Tabellenblätter."
     )
 
 
