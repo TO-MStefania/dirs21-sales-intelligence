@@ -167,12 +167,19 @@ HOTELTYP_HINWEISE = {
 # Stornoquote, Channel-Mix, Trends, Wettbewerbsvergleich, ...). Backend-/
 # Reporting-Tool - NICHT über die Website als "bereits genutzt" erkennbar
 # (siehe logic/dirs21_detection.py - es gibt bewusst kein
-# dirs21_insights_erkannt-Flag). Der Fit bewertet ausschließlich, wie komplex/
-# vielschichtig der öffentlich sichtbare Betrieb ist (mehrere Zielgruppen,
-# zusätzliche Umsatzbereiche, saisonale Schwankungen) - je mehr
-# unterschiedliche Signale kombiniert vorliegen, desto eher lohnt sich eine
-# datengetriebene Auswertung. Kein einzelnes Keyword darf für sich allein
-# einen hohen Score auslösen (siehe _score_insights).
+# dirs21_insights_erkannt-Flag).
+#
+# GRUNDREGEL (bewusst konservativ, siehe Auftrag): ein hoher Insights-Fit
+# setzt Signale aus MEHREREN der vier fachlichen Kategorien voraus:
+#   A) Betriebskomplexität   (Größe, mehrere Angebotsbereiche)
+#   B) Vertriebskomplexität  (Business-/Leisure-Mix, komplexe Nachfrage)
+#   C) Zusatzumsatzkomplexität (mehrere Zusatzumsatzbereiche)
+#   D) Steuerungs-/Analysebedarf (Saisonalität, Tagungsgeschäft, Mix)
+# Eine einzelne Kategorie (z.B. nur "Leisurehotel", nur "Restaurant" oder nur
+# eine hohe Zimmeranzahl) darf NIE einen hohen Fit erzeugen - siehe
+# _score_insights für die genaue Bandzuordnung nach Anzahl erfüllter
+# Kategorien. Region/touristische Lage wird hier bewusst NICHT als Signal
+# geführt (siehe Auftrag Abschnitt 6).
 # ---------------------------------------------------------------------------
 INSIGHTS_BUSINESS_FEATURES = {
     "Business-/Tagungshotel": ["businesshotel", "business hotel", "tagungshotel", "konferenzhotel"],
@@ -193,19 +200,46 @@ INSIGHTS_WELLNESS_FEATURES = {
     "Wellness": ["wellness"],
     "Spa": ["spa"],
 }
-INSIGHTS_ARRANGEMENT_FEATURES = {
-    "Arrangement/Package": ["arrangement", "arrangements", "package", "packages"],
+# Wie bei GUTSCHEIN_STRONG_/WEAK_FEATURES: ein einzelnes Arrangement ist ein
+# schwaches Signal, erst "mehrere" Arrangements/Packages zählen als starkes,
+# für sich allein bereits ausreichendes Zusatzumsatz-Signal (siehe Auftrag
+# Abschnitt 7 - "ein einzelnes Arrangement darf Insights nicht wesentlich
+# erhöhen").
+INSIGHTS_ARRANGEMENT_STRONG_FEATURES = {
+    "Mehrere Arrangements/Packages": [
+        "mehrere arrangements", "verschiedene arrangements", "unsere arrangements", "exklusive arrangements",
+        "mehrere packages", "verschiedene packages", "mehrere pauschalen", "verschiedene pauschalen",
+    ],
+}
+INSIGHTS_ARRANGEMENT_WEAK_FEATURES = {
+    "Einzelnes Arrangement/Package": ["arrangement", "arrangements", "package", "packages"],
     "Upgrade": ["upgrade", "upgrades"],
 }
 INSIGHTS_SEASONAL_FEATURES = {
-    "Saisonales Angebot": [
-        "saisonangebot", "sommerangebot", "winterangebot", "nebensaison", "hauptsaison",
-        "weihnachtsangebot", "silvesterangebot", "osterangebot",
-    ],
+    "Saisonangebot": ["saisonangebot", "nebensaison", "hauptsaison"],
+    "Sommerangebot": ["sommerangebot"],
+    "Winterangebot": ["winterangebot"],
+    "Weihnachtsangebot": ["weihnachtsangebot", "silvesterangebot"],
+    "Osterangebot": ["osterangebot"],
 }
 INSIGHTS_EVENT_FEATURES = {
     "Veranstaltungen": ["veranstaltung", "veranstaltungen", "event", "events"],
 }
+
+# Zimmeranzahl-Faktor für Insights (siehe Auftrag Abschnitt 2) - rein additive
+# Feinjustierung, NICHT kategorie-bildend; wirkt nur ergänzend zusätzlich zur
+# kategorienbasierten Bewertung in _score_insights (u.a. auch dort, in
+# Kategorie A, als "größere Zimmeranzahl"-Signal).
+def _insights_zimmer_adjustment(zimmer: float) -> int:
+    if zimmer <= 10:
+        return -10
+    if zimmer <= 20:
+        return -4
+    if zimmer <= 30:
+        return 2
+    if zimmer <= 50:
+        return 6
+    return 10
 
 
 def _find_matches(text: str, feature_dict: dict):
@@ -313,6 +347,13 @@ def _detect_hoteltyp(text: str) -> str:
     return "unbekannt / nicht eindeutig erkennbar"
 
 
+def _parse_zimmer_numeric(zimmeranzahl):
+    try:
+        return float(zimmeranzahl) if zimmeranzahl not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_hotel_profile(text: str, zimmeranzahl=None) -> dict:
     """Bündelt die aus dem öffentlich sichtbaren Website-Text ableitbaren
     Signale an einer zentralen Stelle (siehe Auftrag "Hotelprofil intern
@@ -329,12 +370,13 @@ def _build_hotel_profile(text: str, zimmeranzahl=None) -> dict:
 
     return {
         "hoteltyp": hoteltyp,
-        "zimmeranzahl": zimmeranzahl,
+        "zimmeranzahl": _parse_zimmer_numeric(zimmeranzahl),
         "business_signale": business_signale,
         "leisure_signale": _find_matches(text, INSIGHTS_LEISURE_FEATURES),
         "restaurant": _find_matches(text, INSIGHTS_RESTAURANT_FEATURES),
         "wellness": _find_matches(text, INSIGHTS_WELLNESS_FEATURES),
-        "arrangements": _find_matches(text, INSIGHTS_ARRANGEMENT_FEATURES),
+        "arrangement_strong": _find_matches(text, INSIGHTS_ARRANGEMENT_STRONG_FEATURES),
+        "arrangement_weak": _find_matches(text, INSIGHTS_ARRANGEMENT_WEAK_FEATURES),
         "tagung": _find_matches(text, MICE_CORE_FEATURES),
         "events": _find_matches(text, INSIGHTS_EVENT_FEATURES),
         "zusatzleistungen": _find_matches(text, PLUS_POSITIVE_FEATURES),
@@ -342,61 +384,157 @@ def _build_hotel_profile(text: str, zimmeranzahl=None) -> dict:
     }
 
 
+# Ab dieser Zimmeranzahl gilt die Betriebsgröße allein schon als
+# "Betriebskomplexität"-Signal (Kategorie A, siehe Auftrag Abschnitt 3).
+INSIGHTS_GROESSERE_ZIMMERANZAHL_SCHWELLE = 31
+
+# Basiswerte je Anzahl erfüllter Kategorien (siehe Auftrag Abschnitt 4):
+# >=3 Kategorien -> 80-100, genau 2 -> 60-79, genau 1 -> 40-59, 0 -> siehe
+# schwache Einzelsignale unten (max. 39).
+INSIGHTS_BASIS_AB_3_KATEGORIEN = 80
+INSIGHTS_BASIS_2_KATEGORIEN = 60
+INSIGHTS_BASIS_1_KATEGORIE = 40
+
+# Kleine-Häuser-Caps (siehe Auftrag Abschnitt 5) - greifen NICHT, wenn
+# außergewöhnlich viele starke Komplexitätssignale vorhanden sind
+# (>= INSIGHTS_CAP_AUSNAHME_KATEGORIEN erfüllte Kategorien).
+INSIGHTS_CAP_AUSNAHME_KATEGORIEN = 3
+INSIGHTS_CAP_BIS_10_ZIMMER = 45
+INSIGHTS_CAP_11_BIS_20_ZIMMER = 60
+
+
 def _score_insights(text: str, zimmeranzahl=None):
+    """Bewertet den Insights-Fit anhand von vier fachlichen Kategorien
+    (siehe Modul-Docstring): A) Betriebskomplexität, B) Vertriebskomplexität,
+    C) Zusatzumsatzkomplexität, D) Steuerungs-/Analysebedarf. Jede Kategorie
+    zählt nur einmal (erfüllt/nicht erfüllt) - ein hoher Fit (>= 80) setzt
+    mindestens drei erfüllte Kategorien voraus, ein "hoher" Fit (>= 60)
+    mindestens zwei. Eine einzelne Kategorie (z.B. nur Leisure-Ausrichtung
+    oder nur Restaurant) erreicht höchstens die Bänder "mittel"/"gering" -
+    nie automatisch einen hohen Fit. Die Zimmeranzahl wirkt nur zusätzlich
+    (als Signal für Kategorie A und als kleine additive Korrektur, siehe
+    _insights_zimmer_adjustment) und niemals allein score-treibend."""
     profile = _build_hotel_profile(text, zimmeranzahl)
+    zimmer = profile["zimmeranzahl"]
 
-    # Jede Kategorie zählt nur einmal, unabhängig davon, wie viele einzelne
-    # Keywords innerhalb der Kategorie getroffen haben - verhindert, dass ein
-    # einzelnes Keyword (bzw. mehrere Synonyme davon) für sich allein einen
-    # hohen Score auslöst (siehe Auftrag).
-    categories = []
-    if profile["business_signale"]:
-        categories.append(("Business-Ausrichtung", profile["business_signale"]))
-    if profile["leisure_signale"]:
-        categories.append(("Leisure-Ausrichtung", profile["leisure_signale"]))
-    if profile["restaurant"]:
-        categories.append(("Restaurant zusätzlich zum Hotel", profile["restaurant"]))
-    if profile["wellness"]:
-        categories.append(("Wellness-/Spa-Angebot", profile["wellness"]))
-    if profile["arrangements"]:
-        categories.append(("Arrangements/Packages", profile["arrangements"]))
-    if profile["saisonalitaet"]:
-        categories.append(("Saisonale Angebote", profile["saisonalitaet"]))
+    offering_areas = [
+        area for area, present in (
+            ("Restaurant zusätzlich zum Hotel", profile["restaurant"]),
+            ("Wellness-/Spa-Angebot", profile["wellness"]),
+            ("MICE-/Tagungsangebot", profile["tagung"]),
+            ("Veranstaltungen", profile["events"]),
+        ) if present
+    ]
+    grosse_zimmeranzahl = zimmer is not None and zimmer >= INSIGHTS_GROESSERE_ZIMMERANZAHL_SCHWELLE
+
+    # A) Betriebskomplexität: entweder eine größere Zimmeranzahl ODER
+    # mehrere unterschiedliche Angebotsbereiche (ein einzelner Bereich wie
+    # "nur Restaurant" oder "nur Wellness" reicht nicht, siehe Auftrag).
+    a_signale = (["Größere Zimmeranzahl"] if grosse_zimmeranzahl else []) + offering_areas
+    a_erfuellt = grosse_zimmeranzahl or len(offering_areas) >= 2
+
+    # B) Vertriebskomplexität: Business- UND Leisure-Ausrichtung gleichzeitig
+    # (reiner Business- oder reiner Leisure-Betrieb allein reicht nicht),
+    # oder ein ausgeprägtes Stadt-/Businesshotel mit erkennbarer
+    # Geschäftsreisenden-Nachfrage.
+    business_leisure_mix = bool(profile["business_signale"]) and bool(profile["leisure_signale"])
+    stadthotel_komplex = profile["hoteltyp"] in ("Stadthotel", "Business-/Tagungshotel") and bool(profile["business_signale"])
+    b_erfuellt = business_leisure_mix or stadthotel_komplex
+    b_signale = (profile["business_signale"] + profile["leisure_signale"]) if b_erfuellt else []
+
+    # C) Zusatzumsatzkomplexität: "mehrere Arrangements" zählt bereits für
+    # sich, da das Signal selbst schon mehrere Angebote ausdrückt. Sonst
+    # erst ab mindestens zwei unterschiedlichen Zusatzumsatzbereichen
+    # (ein einzelnes Arrangement oder nur Wellness/Restaurant reicht nicht).
+    c_bereiche = [
+        bereich for bereich, present in (
+            ("Wellness-/Spa-Angebot", profile["wellness"]),
+            ("Restaurant-Angebot", profile["restaurant"]),
+            ("Zusatzleistungen", profile["zusatzleistungen"]),
+            ("Einzelnes Arrangement", profile["arrangement_weak"]),
+        ) if present
+    ]
+    c_erfuellt = bool(profile["arrangement_strong"]) or len(c_bereiche) >= 2
+    c_signale = (profile["arrangement_strong"] or c_bereiche) if c_erfuellt else []
+
+    # D) Steuerungs-/Analysebedarf: Business-/Leisure-Mix, echtes
+    # Tagungsgeschäft oder mehrfach erkennbare Saisonalität - eine einzelne
+    # allgemeine Saison-Erwähnung reicht nicht als Beleg für echten
+    # Analysebedarf.
+    mehrfache_saisonalitaet = len(profile["saisonalitaet"]) >= 2
+    d_erfuellt = business_leisure_mix or bool(profile["tagung"]) or mehrfache_saisonalitaet
+    d_signale = []
+    if business_leisure_mix:
+        d_signale.append("Business-/Leisure-Mix")
     if profile["tagung"]:
-        categories.append(("MICE-/Tagungsangebot", profile["tagung"]))
-    if profile["events"]:
-        categories.append(("Veranstaltungen", profile["events"]))
+        d_signale.extend(profile["tagung"])
+    if mehrfache_saisonalitaet:
+        d_signale.extend(profile["saisonalitaet"])
 
-    num_categories = len(categories)
-    if num_categories == 0:
-        return 0, (
-            "Keine aussagekräftigen Signale für Business-/Leisure-Mix, Zusatzangebote oder "
-            "Angebotskomplexität öffentlich erkannt."
-        ), []
+    kategorien = [
+        ("Betriebskomplexität", a_erfuellt, a_signale),
+        ("Vertriebskomplexität", b_erfuellt, b_signale),
+        ("Zusatzumsatzkomplexität", c_erfuellt, c_signale),
+        ("Steuerungs-/Analysebedarf", d_erfuellt, d_signale),
+    ]
+    erfuellte_kategorien = [(name, signale) for name, erfuellt, signale in kategorien if erfuellt]
+    num_erfuellt = len(erfuellte_kategorien)
 
-    score = _score_from_match_count(num_categories, base=35, step=15, cap=90)
-    if profile["business_signale"] and profile["leisure_signale"]:
-        # Business- und Leisure-Mix deutet besonders stark auf einen
-        # komplexen Channel-/Umsatzmix hin (siehe Auftrag-Beispiel).
-        score = min(95, score + 15)
+    # Schwache Einzelsignale (keine Kategorie erfüllt, aber nicht nichts) -
+    # heben den Fit innerhalb von "gering" leicht an, erzeugen aber nie
+    # "mittel" oder mehr (siehe Auftrag Abschnitt 4, Band 20-39).
+    schwache_signale = sum(1 for _, present in (
+        ("business", profile["business_signale"]), ("leisure", profile["leisure_signale"]),
+        ("restaurant", profile["restaurant"]), ("wellness", profile["wellness"]),
+        ("arrangement", profile["arrangement_weak"] or profile["arrangement_strong"]),
+        ("tagung", profile["tagung"]), ("events", profile["events"]),
+        ("saison", profile["saisonalitaet"]),
+    ) if present)
 
-    # Zimmeranzahl ist nur ein ergänzendes Signal (siehe Auftrag) - erhöht den
-    # Fit leicht, erzeugt aber niemals allein (ohne mindestens eine der
-    # obigen Kategorien) einen hohen Insights-Fit.
-    try:
-        zimmer_numeric = float(zimmeranzahl) if zimmeranzahl not in (None, "") else None
-    except (TypeError, ValueError):
-        zimmer_numeric = None
-    if zimmer_numeric is not None:
-        if zimmer_numeric >= 100:
-            score = min(95, score + 8)
-        elif zimmer_numeric >= 50:
-            score = min(95, score + 4)
+    if num_erfuellt >= 3:
+        score = min(95, INSIGHTS_BASIS_AB_3_KATEGORIEN + 5 * (num_erfuellt - 3))
+    elif num_erfuellt == 2:
+        score = min(79, INSIGHTS_BASIS_2_KATEGORIEN + 5 * max(0, schwache_signale - 2))
+    elif num_erfuellt == 1:
+        score = min(59, INSIGHTS_BASIS_1_KATEGORIE + 5 * max(0, schwache_signale - 1))
+    elif schwache_signale > 0:
+        score = min(39, 10 + 10 * schwache_signale)
+    else:
+        score = 0
 
-    matches = [m for _, found in categories for m in found]
-    begruendung = "Mehrere Signale für Angebotskomplexität erkannt: " + "; ".join(
-        f"{label} ({', '.join(found[:3])})" for label, found in categories
-    ) + "."
+    # Zimmeranzahl: rein additive Feinjustierung (siehe Auftrag Abschnitt 2) -
+    # wirkt auf jeden Score zusätzlich, erzeugt aber bei komplett fehlenden
+    # Kategorien/Signalen nur einen kleinen Ausschlag, nie einen hohen Fit.
+    if zimmer is not None:
+        score = max(0, min(95, score + _insights_zimmer_adjustment(zimmer)))
+
+    # Kleine-Häuser-Caps (siehe Auftrag Abschnitt 5). Ausnahmen:
+    # - bis 10 Zimmer: nur bei außergewöhnlich vielen Komplexitätssignalen
+    #   (>= INSIGHTS_CAP_AUSNAHME_KATEGORIEN erfüllte Kategorien).
+    # - 11-20 Zimmer: nur bei "deutlicher Angebots-/Vertriebskomplexität",
+    #   d.h. Kategorie B (Vertriebskomplexität) erfüllt oder mindestens 3
+    #   Kategorien insgesamt erfüllt.
+    if zimmer is not None and num_erfuellt < INSIGHTS_CAP_AUSNAHME_KATEGORIEN:
+        if zimmer <= 10:
+            score = min(score, INSIGHTS_CAP_BIS_10_ZIMMER)
+        elif zimmer <= 20 and not b_erfuellt:
+            score = min(score, INSIGHTS_CAP_11_BIS_20_ZIMMER)
+
+    matches = [m for _, found in erfuellte_kategorien for m in found]
+    if num_erfuellt == 0:
+        if schwache_signale == 0:
+            begruendung = "Keine aussagekräftigen Signale für Betriebs-, Vertriebs- oder Angebotskomplexität öffentlich erkannt."
+        else:
+            begruendung = (
+                "Nur vereinzelte, schwache Signale ohne erfüllte Komplexitätskategorie erkannt "
+                "(z.B. einzelnes Angebot oder allgemeine Ausrichtung) - reicht allein nicht für einen "
+                "relevanten Insights-Fit."
+            )
+    else:
+        begruendung = (
+            f"Signale aus {num_erfuellt} von 4 Komplexitätskategorien erkannt: "
+            + "; ".join(f"{name} ({', '.join(signale[:3])})" for name, signale in erfuellte_kategorien) + "."
+        )
     return score, begruendung, matches
 
 
