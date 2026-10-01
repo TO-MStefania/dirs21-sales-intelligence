@@ -13,7 +13,7 @@ import unittest
 import pandas as pd
 import yaml
 
-from logic.route_import import read_route_termine
+from logic.route_import import build_termin, next_termin_id, read_route_termine, revalidate_termin
 
 
 def _build_workbook(route_rows=None, with_sheet=True):
@@ -36,7 +36,8 @@ class TestRouteImport(unittest.TestCase):
             "Unternehmensname": "Hotel A", "DIRS21-ID": 111, "Straße": "Hauptstr. 1", "PLZ": "88045",
             "Ort": "Friedrichshafen", "Termin_Datum": "15.10.2026", "Termin_Uhrzeit": "10:00",
             "Termin_bis": "11:00", "Termin_Status": "fix", "Flexibel_von": "", "Flexibel_bis": "",
-            "Termin_Dauer_Minuten": "", "Priorität": "A", "Bemerkung": "Wichtig",
+            "Termin_Dauer_Minuten": "", "Gesamtpriorität": "A", "Fachliche_Top_Empfehlung": "MICE",
+            "Bemerkung": "Wichtig",
         }]
         termine = read_route_termine(_build_workbook(rows), self.config)
         self.assertEqual(len(termine), 1)
@@ -47,6 +48,7 @@ class TestRouteImport(unittest.TestCase):
         self.assertEqual(t["termin_uhrzeit"], dt.time(10, 0))
         self.assertEqual(t["termin_status"], "fix")
         self.assertEqual(t["prioritaet"], "A")
+        self.assertEqual(t["fachliche_top_empfehlung"], "MICE")
         self.assertEqual(t["pruefhinweis_import"], "")
 
     def test_fehlende_pflichtfelder_werden_markiert_ohne_absturz(self):
@@ -91,6 +93,65 @@ class TestRouteImport(unittest.TestCase):
         termine = read_route_termine(_build_workbook(rows), self.config)
         self.assertEqual(len(termine), 1)
         self.assertEqual(termine[0]["hotel_name"], "Hotel D")
+
+
+class TestBuildTermin(unittest.TestCase):
+    """build_termin() ist die Grundlage für direkt in der Webapp angelegte
+    Termine (siehe Auftrag Abschnitt 3) - muss dieselbe Dict-Form wie
+    read_route_termine() liefern, damit logic/route_planner.py unverändert
+    funktioniert."""
+
+    def test_vollstaendiger_termin_ohne_pruefhinweis(self):
+        termin = build_termin(
+            "Hotel A", "Hauptstr. 1", "88045", "Friedrichshafen",
+            dt.date(2026, 10, 15), dt.time(10, 0),
+            dirs21_id="111", prioritaet="A", fachliche_top_empfehlung="MICE",
+        )
+        self.assertEqual(termin["pruefhinweis_import"], "")
+        self.assertEqual(termin["dirs21_id"], "111")
+        self.assertEqual(termin["adresse_vollstaendig"], "Hauptstr. 1, 88045 Friedrichshafen")
+        self.assertEqual(termin["termin_status"], "")
+
+    def test_fehlende_strasse_wird_markiert_aber_kein_absturz(self):
+        termin = build_termin(
+            "Hotel Ohne Strasse", "", "88045", "Friedrichshafen",
+            dt.date(2026, 10, 15), dt.time(10, 0),
+        )
+        self.assertIn("Straße fehlt", termin["pruefhinweis_import"])
+
+    def test_termin_id_wird_uebernommen_und_next_termin_id_ist_eindeutig(self):
+        tid = next_termin_id()
+        termin = build_termin(
+            "Hotel B", "Seestr. 2", "88045", "Friedrichshafen",
+            dt.date(2026, 10, 15), dt.time(11, 0), termin_id=tid,
+        )
+        self.assertEqual(termin["termin_id"], tid)
+        self.assertNotEqual(next_termin_id(), next_termin_id())
+
+    def test_flexibler_termin_ohne_zeitfenster_wird_markiert(self):
+        termin = build_termin(
+            "Hotel C", "Seestr. 2", "88045", "Friedrichshafen",
+            dt.date(2026, 10, 15), dt.time(11, 0), termin_status="flexibel",
+        )
+        self.assertIn("ohne vollständiges Zeitfenster", termin["pruefhinweis_import"])
+
+    def test_revalidate_termin_aktualisiert_pruefhinweis_nach_bearbeitung(self):
+        termin = build_termin(
+            "Hotel D", "", "88045", "Friedrichshafen",
+            dt.date(2026, 10, 15), dt.time(11, 0),
+        )
+        self.assertIn("Straße fehlt", termin["pruefhinweis_import"])
+        termin["strasse"] = "Nachträglich ergänzt"
+        revalidate_termin(termin)
+        self.assertEqual(termin["pruefhinweis_import"], "")
+        self.assertEqual(termin["adresse_vollstaendig"], "Nachträglich ergänzt, 88045 Friedrichshafen")
+
+    def test_ungueltige_prioritaet_wird_verworfen(self):
+        termin = build_termin(
+            "Hotel E", "Seestr. 2", "88045", "Friedrichshafen",
+            dt.date(2026, 10, 15), dt.time(11, 0), prioritaet="X",
+        )
+        self.assertEqual(termin["prioritaet"], "")
 
 
 if __name__ == "__main__":
