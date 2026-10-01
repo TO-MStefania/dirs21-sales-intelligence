@@ -195,4 +195,12 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
 
     row["pruefhinweis"] = " | ".join(pruefhinweise)
     row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Sicherheitsnetz: row wird bereits oben vollständig aus RESULT_COLUMNS
+    # initialisiert (inkl. "zimmeranzahl"), dieser Check stellt zusätzlich
+    # sicher, dass jedes zurückgegebene Ergebnis-Dictionary alle Spalten
+    # trägt, auch falls RESULT_COLUMNS künftig anders aufgebaut wird.
+    for col in RESULT_COLUMNS:
+        row.setdefault(col, "")
+
     return row

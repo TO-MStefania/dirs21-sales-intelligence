@@ -342,9 +342,11 @@ Ampelsystem formatiert, ohne die Werte selbst zu verändern:
 
 ## Tests
 
-Regressionstests (Empfehlungslogik, MICE-Fit-Scoring, Zimmeranzahl-Erkennung)
-laufen ohne zusätzliche Abhängigkeiten über das Python-Standardmodul
-`unittest`:
+Regressionstests (Empfehlungslogik, MICE-Fit-Scoring, Zimmeranzahl-Erkennung,
+Robustheit der Streamlit-Oberfläche bei fehlenden optionalen Spalten) laufen
+ohne zusätzliche Abhängigkeiten über das Python-Standardmodul `unittest`
+(für die Oberflächentests zusätzlich über `streamlit.testing`, das bereits
+mit `streamlit` installiert wird):
 
 ```bash
 python -m unittest discover tests
