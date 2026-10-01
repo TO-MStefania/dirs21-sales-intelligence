@@ -21,8 +21,15 @@ import yaml
 
 from logic.excel_import import ExcelImportError, read_companies
 from logic.exporter import FIT_BAND_STYLES, GESAMTPRIORITAET_STYLES, export_to_excel_bytes
-from logic.pipeline import RESULT_COLUMNS, analyze_company
+from logic.pipeline import FIT_BEGRUENDUNG_COLUMNS, RESULT_COLUMNS, analyze_company
 from logic.scoring import fit_band
+
+# Alle Spalten, die die Webapp intern vorhält - RESULT_COLUMNS (Excel-Export/
+# CLI-identisch) plus die kurzen Fit-Begründungen je Produkt, die NUR in der
+# Webapp-Detailansicht angezeigt werden (siehe logic/pipeline.py). Der
+# Excel-Download verwendet weiterhin ausschließlich RESULT_COLUMNS, damit die
+# Begründungen nie im Export landen.
+APP_COLUMNS = RESULT_COLUMNS + FIT_BEGRUENDUNG_COLUMNS
 
 st.set_page_config(page_title="DIRS21 Sales Intelligence", page_icon="🏨", layout="wide")
 
@@ -126,12 +133,15 @@ html, body, [class*="css"] { font-family: var(--d21-font); }
 # Konstanten: Spaltenauswahl, Labels, Optionen
 # ---------------------------------------------------------------------------
 LIMIT_OPTIONS = ["5", "10", "20", "50", "Alle"]
-PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id"]
+# DIRS21-ID bewusst sichtbar (siehe Auftrag) - bleibt aber überall ein reiner
+# Identifikator ohne jeden Einfluss auf Fit-Score, Kundenstatus oder
+# Produkterkennung (siehe logic/recommendations.py, logic/pipeline.py).
+PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "dirs21_id", "adressgruppe"]
 
 # Kompakte, vertriebsorientierte Hauptspalten (siehe Auftrag) - alle übrigen
 # Spalten bleiben über die Detailansicht und den Excel-Export verfügbar.
 COMPACT_COLUMNS = [
-    "hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "crm_status",
+    "hotel_name", "website", "ort", "zimmeranzahl", "dirs21_id", "adressgruppe", "crm_status",
     "fachliche_top_empfehlung", "fachliche_top_empfehlung_score", "gesamtprioritaet",
     "vertriebliche_prioritaetsaktion", "pruefhinweis",
 ]
@@ -140,6 +150,7 @@ COMPACT_COLUMN_LABELS = {
     "website": "Website",
     "ort": "Ort",
     "zimmeranzahl": "Zimmer",
+    "dirs21_id": "DIRS21-ID",
     "adressgruppe": "Adressgruppe",
     "crm_status": "CRM-Status",
     "fachliche_top_empfehlung": "Top-Empfehlung",
@@ -155,11 +166,24 @@ PRODUCT_FLAG_COLUMNS = {
     "dirs21_mice_erkannt": "MICE",
     "dirs21_plus_erkannt": "PLUS",
 }
+# Vertriebspotenziale (Fit-Scores) - Insights zählt bewusst dazu, hat aber wie
+# Event-Assistent kein "bereits erkannt"-Flag (siehe logic/recommendations.py).
 FIT_SCORE_COLUMNS = {
     "plus_fit_score": "PLUS",
     "gutscheinshop_fit_score": "Gutscheinshop",
     "mice_fit_score": "MICE",
     "event_assistent_fit_score": "Event-Assistent",
+    "insights_fit_score": "Insights",
+}
+# Ordnet jeder Fit-Score-Spalte die zugehörige kurze Begründung zu (siehe
+# logic/pipeline.FIT_BEGRUENDUNG_COLUMNS) - nur für die Detailansicht, nie
+# für den Excel-Export.
+FIT_BEGRUENDUNG_BY_SCORE_COLUMN = {
+    "plus_fit_score": "plus_fit_begruendung",
+    "gutscheinshop_fit_score": "gutscheinshop_fit_begruendung",
+    "mice_fit_score": "mice_fit_begruendung",
+    "event_assistent_fit_score": "event_assistent_fit_begruendung",
+    "insights_fit_score": "insights_fit_begruendung",
 }
 
 PRIORITY_RANK = {"A": 0, "B": 1, "C": 2, "D": 3}
@@ -414,6 +438,7 @@ def render_detail(original_index: int, row: pd.Series, config: dict) -> None:
                 _detail_field("Ort", row["ort"])
                 _detail_field("Zimmeranzahl", row["zimmeranzahl"])
             with c3:
+                _detail_field("DIRS21-ID", row.get("dirs21_id", ""))
                 _detail_field("Adressgruppe", row["adressgruppe"])
                 _detail_field("CRM-Status", row["crm_status"])
         with col_prio:
@@ -452,15 +477,22 @@ def render_detail(original_index: int, row: pd.Series, config: dict) -> None:
 
         with col_b:
             st.markdown('<div class="d21-section-title">📊 Fachliche Potenziale (Fit-Scores)</div>', unsafe_allow_html=True)
-            badges = []
+            # Je Produkt: kompakte Ampel-Badge mit Score PLUS eine kurze,
+            # faktenbasierte Begründung aus logic/scoring.py (siehe Auftrag -
+            # nur in der Webapp sichtbar, nie im Excel-Export).
             for col, fit_label in FIT_SCORE_COLUMNS.items():
                 score = row.get(col)
                 band_style = FIT_BAND_STYLES.get(fit_band(score)) if score not in (None, "") else None
                 if band_style:
-                    badges.append(_badge_html(f"{fit_label}: {score}", *band_style))
+                    st.markdown(_badge_html(f"{fit_label}: {score}", *band_style), unsafe_allow_html=True)
                 else:
-                    badges.append(_badge_html(f"{fit_label}: –", NEUTRAL_BADGE_BG, NEUTRAL_BADGE_FG))
-            st.markdown(" ".join(badges), unsafe_allow_html=True)
+                    st.markdown(_badge_html(f"{fit_label}: –", NEUTRAL_BADGE_BG, NEUTRAL_BADGE_FG), unsafe_allow_html=True)
+                begruendung_col = FIT_BEGRUENDUNG_BY_SCORE_COLUMN.get(col, "")
+                begruendung = row.get(begruendung_col, "") if begruendung_col else ""
+                if pd.isna(begruendung):
+                    begruendung = ""
+                if begruendung:
+                    st.caption(begruendung)
 
         st.markdown("---")
         _detail_field("Fachliche Top-Empfehlung", f"{row['fachliche_top_empfehlung']} ({row['fachliche_top_empfehlung_score']})")
@@ -480,7 +512,7 @@ def render_detail(original_index: int, row: pd.Series, config: dict) -> None:
                 try:
                     new_row = analyze_company(company, config)
                 except Exception as exc:
-                    new_row = {col: "" for col in RESULT_COLUMNS}
+                    new_row = {col: "" for col in APP_COLUMNS}
                     new_row["hotel_name"] = company.get("hotel_name", "(unbekannt)")
                     new_row["website"] = company.get("website", "")
                     new_row["crawler_status"] = f"Fehler bei Analyse: {exc}"
@@ -553,7 +585,7 @@ def main():
             try:
                 row = analyze_company(company, config, progress_callback=_on_step)
             except Exception as exc:
-                row = {col: "" for col in RESULT_COLUMNS}
+                row = {col: "" for col in APP_COLUMNS}
                 row["hotel_name"] = name
                 row["website"] = company.get("website", "")
                 row["crawler_status"] = f"Fehler bei Analyse: {exc}"
@@ -570,13 +602,18 @@ def main():
     if "result_rows" not in st.session_state:
         return
 
-    full_df = pd.DataFrame(st.session_state["result_rows"], columns=RESULT_COLUMNS)
-    # Sicherheitsnetz: garantiert, dass alle RESULT_COLUMNS vorhanden sind -
-    # auch bei Ergebnissen aus einer älteren Session/Version ohne neuere
-    # optionale Spalten wie "zimmeranzahl". Schützt KPI-Dashboard, Filter,
-    # Ergebnistabelle, Detailansicht und Excel-Export gemeinsam an einer
-    # einzigen Stelle vor einem KeyError.
-    full_df = _ensure_columns(full_df, RESULT_COLUMNS)
+    # APP_COLUMNS = RESULT_COLUMNS + FIT_BEGRUENDUNG_COLUMNS: die Webapp hält
+    # intern zusätzlich die kurzen Fit-Begründungen je Produkt vor (nur für
+    # die Detailansicht, siehe logic/pipeline.py) - der Excel-Export weiter
+    # unten verwendet bewusst nur full_df[RESULT_COLUMNS], damit diese nie im
+    # Export landen.
+    full_df = pd.DataFrame(st.session_state["result_rows"], columns=APP_COLUMNS)
+    # Sicherheitsnetz: garantiert, dass alle APP_COLUMNS vorhanden sind - auch
+    # bei Ergebnissen aus einer älteren Session/Version ohne neuere optionale
+    # Spalten wie "zimmeranzahl" oder "insights_fit_score". Schützt
+    # KPI-Dashboard, Filter, Ergebnistabelle, Detailansicht und Excel-Export
+    # gemeinsam an einer einzigen Stelle vor einem KeyError.
+    full_df = _ensure_columns(full_df, APP_COLUMNS)
     st.success(f"{len(full_df)} Unternehmen analysiert.")
 
     # --- KPI-Dashboard ------------------------------------------------------
@@ -601,7 +638,10 @@ def main():
 
     # --- Excel-Download -----------------------------------------------------
     st.markdown('<div class="d21-section-title">Excel-Export</div>', unsafe_allow_html=True)
-    excel_bytes = export_to_excel_bytes(full_df)
+    # Bewusst nur RESULT_COLUMNS (ohne die Fit-Begründungen) - die Excel-Datei
+    # bleibt schlank, die Begründungen sind ausschließlich in der
+    # Webapp-Detailansicht sichtbar (siehe Auftrag).
+    excel_bytes = export_to_excel_bytes(full_df[RESULT_COLUMNS])
     st.download_button(
         "Ergebnis als Excel herunterladen",
         data=excel_bytes,
@@ -616,11 +656,13 @@ def main():
             "Ein DIRS21-Produkt gilt nur bei technischem Nachweis (z.B. eingebettetes Buchungswidget) "
             "als erkannt - eine reine Funktionsähnlichkeit (z.B. ein Gutscheinshop eines Fremdanbieters) "
             "reicht nicht aus. Bereits erkannte Produkte werden nicht erneut als Empfehlung vorgeschlagen; "
-            "der Event-Assistent ist davon ausgenommen, da er technisch nicht zuverlässig öffentlich "
-            "erkennbar ist. Die Zimmeranzahl ist eine reine Zusatzinformation ohne Einfluss auf Scoring "
-            "oder Priorität."
+            "Event-Assistent und Insights sind davon ausgenommen, da beide technisch nicht zuverlässig "
+            "öffentlich erkennbar sind - DIRS21 Insights ist ein Backend-/Reporting-Tool. Eine fachliche "
+            "Top-Empfehlung wird erst ab einem Fit-Score von 60 ausgesprochen, sonst "
+            "\"Keine klare Zusatzmodul-Empfehlung\". Die Zimmeranzahl und die DIRS21-ID sind reine "
+            "Zusatzinformationen ohne Einfluss auf Scoring oder Priorität."
         )
-        st.dataframe(full_df, width="stretch")
+        st.dataframe(full_df[RESULT_COLUMNS], width="stretch")
 
 
 if __name__ == "__main__":

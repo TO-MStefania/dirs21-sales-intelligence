@@ -53,7 +53,7 @@ rows = [
     {**base,
         "hotel_name": "Hotel Vier", "website": "vier.de", "ort": "Friedrichshafen", "zimmeranzahl": "",
         "adressgruppe": "ehemaliger Kunde", "crm_status": "Ehemaliger Kunde",
-        "fachliche_top_empfehlung": "Kein zusätzliches Modul empfohlen", "fachliche_top_empfehlung_score": 0,
+        "fachliche_top_empfehlung": "Keine klare Zusatzmodul-Empfehlung", "fachliche_top_empfehlung_score": 0,
         "gesamtprioritaet": "D", "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
     },
     {**base,

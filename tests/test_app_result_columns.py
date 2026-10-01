@@ -120,5 +120,44 @@ class TestPipelineZimmeranzahlImmerVorhanden(unittest.TestCase):
         self.assertIn("zimmeranzahl", pipeline.RESULT_COLUMNS)
 
 
+class TestInsightsUndDirs21IdInResultColumns(unittest.TestCase):
+    """Fall 10 (DIRS21-ID sichtbar, kein Score-Effekt) sowie die Insights-
+    Produktpalette: insights_fit_score muss wie die übrigen Fit-Scores Teil
+    von RESULT_COLUMNS (Excel-Export/CLI) sein, DIRS21-ID muss in der
+    Webapp-Vorschau und der kompakten Ergebnistabelle sichtbar sein. Die
+    kurzen Fit-Begründungen (nur für die Detailansicht) dürfen dagegen NICHT
+    in RESULT_COLUMNS landen, damit sie nie im Excel-Export auftauchen."""
+
+    def test_insights_fit_score_in_result_columns(self):
+        self.assertIn("insights_fit_score", pipeline.RESULT_COLUMNS)
+
+    def test_kein_dirs21_insights_erkannt_feld(self):
+        self.assertNotIn("dirs21_insights_erkannt", pipeline.RESULT_COLUMNS)
+
+    def test_fit_begruendung_spalten_nicht_in_result_columns(self):
+        for col in pipeline.FIT_BEGRUENDUNG_COLUMNS:
+            self.assertNotIn(col, pipeline.RESULT_COLUMNS)
+
+    def test_dirs21_id_in_vorschau_sichtbar(self):
+        self.assertIn("dirs21_id", app.PREVIEW_COLUMNS)
+
+    def test_dirs21_id_in_kompakter_ergebnistabelle_sichtbar(self):
+        self.assertIn("dirs21_id", app.COMPACT_COLUMNS)
+
+    def test_insights_in_fit_score_spalten_der_detailansicht(self):
+        self.assertIn("insights_fit_score", app.FIT_SCORE_COLUMNS)
+
+    def test_excel_export_enthaelt_keine_fit_begruendungsspalten(self):
+        row = {col: "" for col in pipeline.RESULT_COLUMNS}
+        row["hotel_name"] = "Test"
+        df = pd.DataFrame([row], columns=pipeline.RESULT_COLUMNS)
+        excel_bytes = app.export_to_excel_bytes(df)
+        self.assertTrue(len(excel_bytes) > 0)
+        read_back = pd.read_excel(pd.io.common.BytesIO(excel_bytes))
+        for col in pipeline.FIT_BEGRUENDUNG_COLUMNS:
+            self.assertNotIn(col, read_back.columns)
+        self.assertIn("insights_fit_score", read_back.columns)
+
+
 if __name__ == "__main__":
     unittest.main()
