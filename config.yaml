@@ -12,6 +12,10 @@ excel:
     hotel_name: Unternehmensname
     website: Unternehmensdomain
     ort: Ort
+    # optional - vorhandener Excel-Wert hat immer Vorrang vor jeder Recherche
+    # (siehe logic/room_count_detection.py). Leer bleibt leer -> dann wird
+    # zuerst die Website, danach ggf. sparsam eine Websuche geprüft.
+    zimmeranzahl: Zimmeranzahl
     adressgruppe: Adressgruppe
     dirs21_id: DIRS21-ID
     # optional - falls in deinem Export nicht vorhanden, bleibt das Feld leer

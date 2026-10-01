@@ -126,7 +126,7 @@ html, body, [class*="css"] { font-family: var(--d21-font); }
 # Konstanten: Spaltenauswahl, Labels, Optionen
 # ---------------------------------------------------------------------------
 LIMIT_OPTIONS = ["5", "10", "20", "50", "Alle"]
-PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "adressgruppe", "dirs21_id"]
+PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id"]
 
 # Kompakte, vertriebsorientierte Hauptspalten (siehe Auftrag) - alle übrigen
 # Spalten bleiben über die Detailansicht und den Excel-Export verfügbar.

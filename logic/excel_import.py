@@ -10,7 +10,7 @@ das Mapping erfolgt deshalb ausschließlich über config.yaml, nicht im Code.
 import pandas as pd
 
 REQUIRED_FIELDS = ("hotel_name", "website")
-OPTIONAL_FIELDS = ("ort", "adressgruppe", "dirs21_id", "record_id")
+OPTIONAL_FIELDS = ("ort", "zimmeranzahl", "adressgruppe", "dirs21_id", "record_id")
 ALL_FIELDS = REQUIRED_FIELDS + OPTIONAL_FIELDS
 
 
@@ -29,7 +29,7 @@ def read_companies(excel_path: str, config: dict) -> list:
     """
     Liest die Excel-Datei ein und gibt eine Liste von Dicts zurück, je eines
     pro Unternehmen (Reihenfolge wie in der Eingabedatei):
-    {hotel_name, website, ort, adressgruppe, dirs21_id, record_id,
+    {hotel_name, website, ort, zimmeranzahl, adressgruppe, dirs21_id, record_id,
      zeilennummer, pruefhinweis_import}
 
     Komplett leere Zeilen werden übersprungen. Fehlt hotel_name oder website
