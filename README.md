@@ -125,12 +125,40 @@ einen Ordner gelegt.
    Daten.
 4. Maximale Anzahl zu analysierender Unternehmen wählen (5, 10, 20, 50 oder
    Alle - Standard: 5) und auf **"Analyse starten"** klicken.
-5. Ein Fortschrittsbalken zeigt den Analysefortschritt
-   (`12 / 66 - Hotel XY wird analysiert`); Fehler bei einzelnen Websites
-   brechen die Analyse nicht ab, sondern werden in `crawler_status` bzw.
-   `pruefhinweis` dokumentiert.
-6. Nach Abschluss erscheint die Ergebnistabelle sowie der Button
-   **"Ergebnis als Excel herunterladen"**.
+5. Ein Fortschrittsbalken zeigt den Analysefortschritt mit Position,
+   Unternehmensname und aktuellem Analyseschritt (z.B.
+   `12 / 66 — Hotel XY — Zimmeranzahl wird gesucht`); Fehler bei einzelnen
+   Websites brechen die Analyse nicht ab, sondern werden in
+   `crawler_status` bzw. `pruefhinweis` dokumentiert.
+6. Nach Abschluss erscheinen:
+   - ein **KPI-Dashboard** (analysierte Unternehmen, Priorität A/B-Anzahl,
+     durchschnittlicher Top-Fit-Score, durchschnittliche Zimmeranzahl,
+     Anzahl ohne gefundene Zimmeranzahl),
+   - ein **Filterbereich** (Gesamtpriorität, CRM-Status, Adressgruppe,
+     Top-Empfehlung, Ort, Zimmeranzahl-Bereich, sowie Schnellfilter wie
+     "Nur Priorität A" oder "Manuell prüfen") - wirkt nur auf die Anzeige,
+     löst keine erneute Analyse aus,
+   - eine **Sortierauswahl** (Standard: Gesamtpriorität, dann Top-Fit
+     absteigend; alternativ Hotelname, Ort, Zimmeranzahl, Top-Fit oder
+     Gesamtpriorität),
+   - eine kompakte **Ergebnistabelle** mit Ampelfarben für Fit-Score und
+     Gesamtpriorität (dieselben Farbbänder wie im Excel-Export),
+   - eine aufklappbare **Detailansicht pro Unternehmen** mit allen übrigen
+     Feldern, klar getrennt in "bereits technisch erkannte DIRS21-Produkte"
+     und "fachliche Potenziale (Fit-Scores)", sowie einem Button
+     **"🔄 Unternehmen erneut analysieren"**, der nur dieses eine
+     Unternehmen neu crawlt (Website, DIRS21-Erkennung, Zimmeranzahl,
+     Fit-Scores, Vertriebsaktion, Prüfhinweise) - alle anderen Zeilen
+     bleiben unverändert,
+   - der Button **"Ergebnis als Excel herunterladen"** (exportiert immer
+     alle analysierten Unternehmen mit allen Spalten, unabhängig von den
+     Filtern),
+   - ein Bereich **"Technische Informationen"** mit der vollständigen,
+     ungefilterten Rohdatentabelle und kurzen Hinweisen zur Erkennungslogik.
+
+Farben, Abstände, Rundungen und Schriftgrößen sind zentral als CSS-Variablen
+in `app.py` (`DESIGN_CSS`, direkt unter `st.set_page_config`) definiert und
+können dort angepasst werden.
 
 ## Deployment auf Streamlit Community Cloud
 
@@ -167,10 +195,11 @@ logic/
   pipeline.py                      Gemeinsame Analyse-Pipeline (von analyze.py und app.py genutzt)
   website_crawler.py               Öffentliches Crawling der Hotel-Website
   dirs21_detection.py              Erkennung öffentlicher DIRS21-Nutzungs-Hinweise
+  room_count_detection.py           Öffentliche Zimmeranzahl-Recherche (reine Zusatzinformation)
   status_detection.py              Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
   scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
   recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung
-  exporter.py                      Excel-Export
+  exporter.py                      Excel-Export (Ampelformatierung, zentral für analyze.py und app.py)
   hubspot_client.py                 HubSpot-API-Zugriff (read-only) - aktuell von keinem Einstiegspunkt
                                      genutzt, bleibt für eine mögliche spätere HubSpot-Anbindung erhalten
 data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert, nur für analyze.py)
@@ -194,6 +223,26 @@ Fehlt eine optionale Spalte im Export komplett, läuft die Analyse trotzdem.
 Fehlt bei einem Unternehmen der Name oder die Website, wird der Datensatz
 trotzdem übernommen (Reihenfolge bleibt erhalten), aber über die Spalte
 `pruefhinweis` markiert. Komplett leere Zeilen werden übersprungen.
+
+## Zimmeranzahl (logic/room_count_detection.py)
+
+Zusätzlich zur fachlichen Logik ermittelt die App, wo öffentlich auffindbar,
+die Anzahl buchbarer Unterkunftseinheiten (Hotelzimmer, Gästezimmer,
+Einzel-/Doppelzimmer, Suiten, Apartments, Ferienwohnungen) und schreibt sie
+in die Spalte `zimmeranzahl`. Dafür werden ausschließlich bereits gecrawlte
+Seiten verwendet (keine zusätzlichen Requests). Wichtige Regeln:
+
+- Eine ausdrücklich genannte Gesamtzahl hat Vorrang vor Teilkategorien
+  (z.B. "30 Zimmer, darunter 5 Suiten" -> 30, keine Doppelzählung).
+- Teilkategorien werden nur addiert, wenn sie klar als vollständige, durch
+  "und"/"sowie" verbundene Aufzählung erkennbar sind (z.B. "20 Zimmer und
+  4 Apartments" -> 24).
+- Betten, Schlafplätze, maximale Personenzahl, Stellplätze, Tagungsräume
+  und Restaurantplätze zählen ausdrücklich nicht als Zimmeranzahl.
+- Lässt sich keine belastbare Zahl eindeutig bestimmen, bleibt das Feld
+  leer - es wird nichts geschätzt.
+- Die Zimmeranzahl ist eine reine Zusatzinformation und fließt an keiner
+  Stelle in Fit-Score, Gesamtpriorität oder Vertriebslogik ein.
 
 ## Fachliche Logik (Kurzüberblick)
 
@@ -260,9 +309,12 @@ Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
 - Domains ohne `http://`/`https://` werden automatisch normalisiert.
 - Pro Website werden nur die Startseite sowie eine begrenzte Anzahl
   thematisch relevanter Unterseiten geladen (Buchung, Gutschein, Tagung,
-  Event, Datenschutz, ...), um die Analyse vieler Unternehmen nicht
-  unnötig zu verlangsamen (einstellbar über
-  `analysis.max_pages_per_website` in `config.yaml`).
+  Event, Datenschutz, Zimmer, Über uns, Apartments, Ferienwohnungen,
+  Unterkunft, Gastgeber, Fakten, Presse, Impressum, ...), um die Analyse
+  vieler Unternehmen nicht unnötig zu verlangsamen (einstellbar über
+  `analysis.max_pages_per_website` in `config.yaml`). Dieselben Seiten
+  werden auch für die Zimmeranzahl-Recherche verwendet - es entstehen
+  dafür keine zusätzlichen Requests.
 - Während der Analyse zeigt `analyze.py` einen Fortschritt pro Unternehmen
   im Terminal an und speichert regelmäßig einen Zwischenstand der
   Ergebnis-Excel-Datei.
@@ -290,9 +342,9 @@ Ampelsystem formatiert, ohne die Werte selbst zu verändern:
 
 ## Tests
 
-Regressionstests (aktuell für die Empfehlungslogik in
-`logic/recommendations.py`) laufen ohne zusätzliche Abhängigkeiten über das
-Python-Standardmodul `unittest`:
+Regressionstests (Empfehlungslogik, MICE-Fit-Scoring, Zimmeranzahl-Erkennung)
+laufen ohne zusätzliche Abhängigkeiten über das Python-Standardmodul
+`unittest`:
 
 ```bash
 python -m unittest discover tests

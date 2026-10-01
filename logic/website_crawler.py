@@ -18,7 +18,12 @@ DEFAULT_MAX_PAGES = 8
 USER_AGENT = "Mozilla/5.0 (compatible; DIRS21-SalesIntelligence/1.0)"
 
 # Pfad-/Linktext-Hinweise, die auf für die Analyse relevante Unterseiten
-# hindeuten (Buchung, Gutschein, Tagung/MICE, Event, Datenschutz, ...).
+# hindeuten (Buchung, Gutschein, Tagung/MICE, Event, Datenschutz, ...) sowie
+# Seiten, auf denen die Zimmeranzahl (logic/room_count_detection.py) am
+# ehesten genannt wird (Zimmer, Über uns, Apartments, Ferienwohnungen,
+# Unterkunft, Gastgeber, Fakten, Presse, Impressum) - werden im selben
+# Crawl-Durchlauf mitgenommen, damit dafür keine zusätzlichen Requests
+# nötig sind.
 RELEVANT_PATH_KEYWORDS = [
     "buch", "book", "reserv",
     "gutschein", "voucher", "geschenk",
@@ -27,6 +32,8 @@ RELEVANT_PATH_KEYWORDS = [
     "angebot", "arrangement",
     "datenschutz", "privacy",
     "spa", "wellness",
+    "zimmer", "ueber-uns", "über-uns", "hotel", "apartment", "ferienwohnung",
+    "unterkunft", "gastgeber", "fakten", "presse", "impressum",
 ]
 
 

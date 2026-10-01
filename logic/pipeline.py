@@ -11,6 +11,7 @@ from datetime import datetime
 
 from logic.dirs21_detection import detect_dirs21
 from logic.recommendations import build_recommendation
+from logic.room_count_detection import detect_room_count
 from logic.scoring import score_all_modules
 from logic.status_detection import (
     crm_status_label,
@@ -22,8 +23,11 @@ from logic.website_crawler import crawl_website
 
 # Exakte Ausgabespalten - kompakt und vertriebsorientiert, keine
 # Begründungsspalten, keine weiteren Potenziale, kein Gesprächseinstieg.
+# zimmeranzahl ist eine reine Zusatzinformation (siehe
+# logic/room_count_detection.py) und fließt an keiner Stelle in Fit-Score,
+# Gesamtpriorität oder Vertriebslogik ein.
 RESULT_COLUMNS = [
-    "hotel_name", "website", "ort", "adressgruppe", "dirs21_id",
+    "hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id",
     "crm_status", "dirs21_direktbuchung_erkannt", "dirs21_gutscheinshop_erkannt",
     "dirs21_plus_erkannt", "dirs21_mice_erkannt",
     "dirs21_erkennungssicherheit", "statusklasse", "verkaufsmodus",
@@ -59,10 +63,24 @@ EMPTY_SCORING = {
 }
 
 
-def analyze_company(company: dict, config: dict) -> dict:
+def _report(progress_callback, step: str) -> None:
+    if not progress_callback:
+        return
+    try:
+        progress_callback(step)
+    except Exception:
+        pass  # Fortschrittsanzeige ist rein informativ - darf die Analyse nie stören.
+
+
+def analyze_company(company: dict, config: dict, progress_callback=None) -> dict:
     """Analysiert ein einzelnes Unternehmen. Wirft niemals - Fehler werden in
     crawler_status/pruefhinweis dokumentiert, damit die Gesamtanalyse
-    weiterläuft (siehe analyze.py main() bzw. app.py)."""
+    weiterläuft (siehe analyze.py main() bzw. app.py).
+
+    progress_callback: optionales callable(step: str), das vor jedem
+    Analyseschritt mit einem kurzen Label aufgerufen wird (z.B. für eine
+    Fortschrittsanzeige in der Streamlit-Webapp). Wird von analyze.py nicht
+    verwendet und ändert dessen Verhalten nicht."""
     adressgruppe_mapping = config.get("adressgruppe_mapping", {})
     analysis_cfg = config.get("analysis", {})
     max_pages = analysis_cfg.get("max_pages_per_website", 8)
@@ -99,6 +117,7 @@ def analyze_company(company: dict, config: dict) -> dict:
         row["crawler_status"] = "Übersprungen (keine Website/Domain)"
         detection = dict(EMPTY_DETECTION)
     else:
+        _report(progress_callback, "Website wird geprüft")
         crawl = crawl_website(website, max_pages=max_pages, timeout=timeout)
         row["crawler_status"] = crawl.status if crawl.status != "fehler" else f"Fehler: {crawl.error}"
 
@@ -106,12 +125,22 @@ def analyze_company(company: dict, config: dict) -> dict:
             pruefhinweise.append(f"Website-Analyse fehlgeschlagen: {crawl.error}")
             detection = dict(EMPTY_DETECTION)
         else:
+            _report(progress_callback, "DIRS21-Produkte werden erkannt")
             try:
                 detection = detect_dirs21(crawl.pages, dirs21_keywords=dirs21_keywords)
             except Exception as exc:
                 detection = dict(EMPTY_DETECTION)
                 pruefhinweise.append(f"DIRS21-Erkennung fehlgeschlagen: {exc}")
             combined_text = " ".join(crawl.pages.values())
+
+            # Zimmeranzahl: nutzt ausschließlich die bereits gecrawlten Seiten
+            # (crawl.pages) - es werden keine zusätzlichen Requests ausgelöst.
+            # Reine Zusatzinformation, fließt nicht in Fit-Score/Priorität ein.
+            _report(progress_callback, "Zimmeranzahl wird gesucht")
+            try:
+                row["zimmeranzahl"] = detect_room_count(crawl.pages)
+            except Exception as exc:
+                pruefhinweise.append(f"Zimmeranzahl-Suche fehlgeschlagen: {exc}")
 
     row["dirs21_direktbuchung_erkannt"] = detection["direktbuchung_erkannt"]
     row["dirs21_gutscheinshop_erkannt"] = detection["gutscheinshop_erkannt"]
@@ -124,6 +153,7 @@ def analyze_company(company: dict, config: dict) -> dict:
     row["statusklasse"] = determine_statusklasse(canonical, row["dirs21_direktbuchung_erkannt"])
     row["verkaufsmodus"] = determine_verkaufsmodus(canonical, row["dirs21_direktbuchung_erkannt"])
 
+    _report(progress_callback, "Fit wird berechnet")
     try:
         scoring_result = score_all_modules(combined_text)
     except Exception as exc:
