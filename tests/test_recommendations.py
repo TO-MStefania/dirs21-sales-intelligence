@@ -203,6 +203,57 @@ class TestInsightsNiemalsAlsBestehendErkannt(unittest.TestCase):
         self.assertNotIn("dirs21_insights_erkannt", row)
 
 
+class TestInsightsUndGesamtprioritaetEntkoppelt(unittest.TestCase):
+    """Ein hoher Insights-Fit allein darf nie automatisch Gesamtpriorität A
+    erzeugen (siehe Auftrag "Insights und Gesamtpriorität entkoppeln") - dafür
+    braucht es mindestens ein weiteres Modul mit relevantem Fit
+    (>= MIN_POTENTIAL_SCORE) als Beleg für echte, mehrfach belegte
+    Betriebskomplexität."""
+
+    def test_isolierter_hoher_insights_fit_bei_kunde_erzeugt_kein_a(self):
+        scoring = make_scoring(plus=0, gutscheinshop=0, mice=0, event_assistent=0, insights=90)
+        row = make_row(crm_status="Kunde (Bestandskunde)")
+
+        rec = build_recommendation("kunde", row, scoring)
+
+        self.assertEqual(rec["fachliche_top_empfehlung"], "Insights")
+        self.assertNotEqual(rec["gesamtprioritaet"], "A")
+        self.assertEqual(rec["gesamtprioritaet"], "B")
+
+    def test_insights_plus_weiteres_relevantes_modul_erlaubt_a(self):
+        """Ist Insights hoch UND zeigt ein weiteres Modul mindestens
+        MIN_POTENTIAL_SCORE (z.B. weil es bereits als DIRS21-Produkt genutzt
+        wird und damit echte Komplexität belegt), bleibt A weiterhin möglich."""
+        scoring = make_scoring(plus=0, gutscheinshop=50, mice=0, event_assistent=0, insights=90)
+        row = make_row(crm_status="Kunde (Bestandskunde)")
+
+        rec = build_recommendation("kunde", row, scoring)
+
+        self.assertEqual(rec["fachliche_top_empfehlung"], "Insights")
+        self.assertEqual(rec["gesamtprioritaet"], "A")
+
+    def test_nicht_kunde_adressgruppe_unveraendert_b(self):
+        """Bei Neukunde/Akquise/etc. war ein hoher Insights-Fit schon vorher
+        nie A, sondern B - die Entkopplung ändert daran nichts."""
+        scoring = make_scoring(insights=95)
+        row = make_row()
+
+        rec = build_recommendation("neukunde", row, scoring)
+
+        self.assertEqual(rec["gesamtprioritaet"], "B")
+
+    def test_hoher_fit_eines_anderen_moduls_bleibt_unveraendert_a(self):
+        """Die Entkopplung betrifft ausschließlich Insights - ein isolierter
+        hoher MICE-Fit erzeugt bei Kunde weiterhin A, wie bisher."""
+        scoring = make_scoring(mice=90)
+        row = make_row(crm_status="Kunde (Bestandskunde)")
+
+        rec = build_recommendation("kunde", row, scoring)
+
+        self.assertEqual(rec["fachliche_top_empfehlung"], "MICE")
+        self.assertEqual(rec["gesamtprioritaet"], "A")
+
+
 class TestDirs21IdOhneScoreEffekt(unittest.TestCase):
     """Fall 10: Die DIRS21-ID ist nur ein Identifikator und darf keinerlei
     Einfluss auf Fit-Scores oder Empfehlung haben."""

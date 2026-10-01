@@ -27,9 +27,17 @@ beträgt. Ein Modul mit 40-59 Punkten kann fachliches Potenzial haben, wird
 aber NICHT automatisch als aktive Top-Empfehlung ausgespielt - stattdessen
 lautet die Empfehlung KEIN_MODUL_LABEL. fachliche_top_empfehlung_score zeigt
 in diesem Fall weiterhin den höchsten verfügbaren Score (zur Einordnung in
-der Detailansicht und für die unveränderte Gesamtprioritätslogik, die sich
-unabhängig von der Empfehlungsschwelle weiterhin am tatsächlichen Fit
-orientiert).
+der Detailansicht und für die Gesamtprioritätslogik, die sich unabhängig von
+der Empfehlungsschwelle weiterhin am tatsächlichen Fit orientiert).
+
+INSIGHTS UND GESAMTPRIORITÄT ENTKOPPELT (siehe Auftrag): Ein hoher
+Insights-Fit allein darf NIE automatisch Gesamtpriorität A erzeugen. Ist
+Insights das Top-Modul mit "hoch"/"sehr hoch" und KEIN anderes Modul erreicht
+mindestens MIN_POTENTIAL_SCORE, wird die Priorität auf B zurückgestuft -
+unabhängig davon, wie hoch der isolierte Insights-Fit ist. Erst wenn
+mindestens ein weiteres Modul ebenfalls einen relevanten Fit zeigt (echte,
+mehrfach belegte Betriebskomplexität statt eines Einzelsignals), bleibt A
+möglich.
 """
 
 from .scoring import fit_band
@@ -55,6 +63,14 @@ ALREADY_USED_FLAG_BY_MODULE = {
 MIN_POTENTIAL_SCORE = 40
 MIN_RECOMMENDATION_SCORE = 60
 KEIN_MODUL_LABEL = "Keine klare Zusatzmodul-Empfehlung"
+
+# INSIGHTS UND GESAMTPRIORITÄT ENTKOPPELT (siehe Auftrag): ein hoher
+# Insights-Fit allein darf NIE automatisch Gesamtpriorität A erzeugen - dafür
+# müsste mindestens ein weiteres Modul ebenfalls einen relevanten Fit
+# (>= MIN_POTENTIAL_SCORE) zeigen, als Beleg für echte, mehrfach belegte
+# Betriebskomplexität statt eines isolierten Einzelsignals (siehe
+# _gesamtprioritaet/_hat_weiteren_relevanten_fit).
+INSIGHTS_MODULE_NAME = "insights"
 
 
 def _ranked_modules(scoring_result: dict):
@@ -97,14 +113,29 @@ def empfehlungsstatus(score) -> str:
     return "keine aktive Empfehlung"
 
 
-def _gesamtprioritaet(canonical_adressgruppe: str, top_score: int) -> str:
+def _hat_weiteren_relevanten_fit(top_name: str, ranked) -> bool:
+    """True, wenn mindestens ein ANDERES Modul als top_name ebenfalls einen
+    relevanten Fit (>= MIN_POTENTIAL_SCORE) hat - verwendet, um einen
+    isolierten, hohen Insights-Fit von einem durch mehrere Module belegten
+    Fit zu unterscheiden (siehe _gesamtprioritaet)."""
+    return any(score >= MIN_POTENTIAL_SCORE for name, score in ranked if name != top_name)
+
+
+def _gesamtprioritaet(canonical_adressgruppe: str, top_name: str, top_score: int, ranked) -> str:
     band = fit_band(top_score)
 
     if canonical_adressgruppe == "unklar":
         return "C" if band in ("sehr hoch", "hoch") else "D"
 
     if band in ("sehr hoch", "hoch"):
-        return "A" if canonical_adressgruppe == "kunde" else "B"
+        if canonical_adressgruppe != "kunde":
+            return "B"
+        if top_name == INSIGHTS_MODULE_NAME and not _hat_weiteren_relevanten_fit(top_name, ranked):
+            # Ein isolierter hoher Insights-Fit ohne jedes weitere Modul mit
+            # relevantem Fit darf keine Priorität A auslösen (siehe Auftrag
+            # "Insights und Gesamtpriorität entkoppeln") - stattdessen B.
+            return "B"
+        return "A"
     if band == "mittel":
         return "B" if canonical_adressgruppe == "kunde" else "C"
     if band == "gering":
@@ -234,7 +265,7 @@ def build_recommendation(canonical_adressgruppe: str, row: dict, scoring_result:
             _zusatzmodul_als_argument(canonical_adressgruppe, top_display, top_score)
             if has_recommendable_module else ""
         ),
-        "gesamtprioritaet": _gesamtprioritaet(canonical_adressgruppe, top_score),
+        "gesamtprioritaet": _gesamtprioritaet(canonical_adressgruppe, top_name, top_score, ranked),
         "vertriebliche_begruendung": _vertriebliche_begruendung(
             canonical_adressgruppe,
             row.get("crm_status", ""),

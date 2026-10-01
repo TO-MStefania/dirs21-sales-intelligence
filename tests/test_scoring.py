@@ -144,9 +144,11 @@ class TestInsightsFit(unittest.TestCase):
 
     def test_zimmeranzahl_allein_erzeugt_keinen_hohen_fit(self):
         """Auch eine sehr hohe Zimmeranzahl darf ohne jedes weitere Signal
-        keinen hohen Insights-Fit erzeugen (siehe Auftrag)."""
+        keinen HOHEN Insights-Fit erzeugen (siehe Auftrag) - "Grundsätzliches
+        Potenzial" (Band 40-59) allein aufgrund der Betriebsgröße ist zulässig,
+        "hoch"/"sehr hoch" (>= 60) nicht."""
         score, _, _ = _score_insights("willkommen in unserem haus.", zimmeranzahl="300")
-        self.assertEqual(score, 0)
+        self.assertLess(score, 60)
 
     def test_zimmeranzahl_erhoeht_fit_nur_ergaenzend(self):
         text = "unser stadthotel hat ein restaurant und einen tagungsraum."
@@ -159,6 +161,80 @@ class TestInsightsFit(unittest.TestCase):
         score, begruendung, matches = _score_insights("")
         self.assertEqual(score, 0)
         self.assertEqual(matches, [])
+
+
+class TestInsightsScoringVerschaerft(unittest.TestCase):
+    """Regressionstests für die verschärfte Insights-Bewertung (siehe Auftrag):
+    Bodensee/touristische Lage, ein Leisurehotel, ein einzelnes Arrangement,
+    Restaurant allein oder Wellness allein dürfen NIE automatisch einen hohen
+    Insights-Fit erzeugen. Kleine/einfache Häuser (insbesondere <= 10 Zimmer)
+    bleiben konservativ gedeckelt, auch wenn sie in einer touristischen
+    Region liegen."""
+
+    def test_8_zimmer_einfacher_betrieb_sehr_niedrig(self):
+        score, _, _ = _score_insights("gemütlicher gasthof mit frühstück.", zimmeranzahl="8")
+        self.assertLess(score, 40)
+
+    def test_10_zimmer_leisure_touristische_lage_nicht_automatisch_hoch(self):
+        """Ein kleines Leisure-/Ferienhotel in touristischer Lage (z.B.
+        Bodensee) darf nicht automatisch einen hohen Insights-Fit und damit
+        Top-Empfehlung erhalten, nur weil es ein Ferienhotel ist."""
+        score, _, _ = _score_insights(
+            "unser ferienhotel liegt direkt am see, ideal für ihren urlaub.", zimmeranzahl="10"
+        )
+        self.assertLess(score, 60)
+        self.assertLessEqual(score, 45)  # Cap bis 10 Zimmer (siehe Auftrag Abschnitt 5)
+
+    def test_15_zimmer_wellness_und_arrangements_mittel_nicht_automatisch_hoch(self):
+        text = "unser haus bietet einen wellnessbereich und ein spezielles arrangement."
+        score, _, _ = _score_insights(text, zimmeranzahl="15")
+        self.assertLess(score, 60)
+
+    def test_30_zimmer_restaurant_bleibt_gering(self):
+        score, _, _ = _score_insights("unser restaurant verwöhnt sie mit regionaler küche.", zimmeranzahl="30")
+        self.assertLess(score, 40)
+
+    def test_45_zimmer_business_und_mice_kann_hoch_sein(self):
+        text = "unser business hotel verfügt über einen tagungsraum für veranstaltungen."
+        score, _, _ = _score_insights(text, zimmeranzahl="45")
+        self.assertGreaterEqual(score, 60)
+
+    def test_80_zimmer_komplexes_angebot_sehr_hoch_moeglich(self):
+        text = (
+            "unser stadthotel mit businessgästen und urlaubsgästen bietet restaurant, "
+            "wellnessbereich, tagungsraum, veranstaltungen und mehrere arrangements."
+        )
+        score, _, _ = _score_insights(text, zimmeranzahl="80")
+        self.assertGreaterEqual(score, 80)
+
+    def test_scores_sind_sinnvoll_differenziert(self):
+        """Die sechs Beispiel-Betriebe sollen in aufsteigender Reihenfolge
+        der tatsächlichen Komplexität auch aufsteigende (oder zumindest nicht
+        fallende) Scores erhalten."""
+        faelle = [
+            ("gemütlicher gasthof mit frühstück.", "8"),
+            ("unser ferienhotel liegt direkt am see, ideal für ihren urlaub.", "10"),
+            ("unser restaurant verwöhnt sie mit regionaler küche.", "30"),
+            ("unser haus bietet einen wellnessbereich und ein spezielles arrangement.", "15"),
+            ("unser business hotel verfügt über einen tagungsraum für veranstaltungen.", "45"),
+            (
+                "unser stadthotel mit businessgästen und urlaubsgästen bietet restaurant, "
+                "wellnessbereich, tagungsraum, veranstaltungen und mehrere arrangements.",
+                "80",
+            ),
+        ]
+        scores = [_score_insights(text, zimmeranzahl=zimmer)[0] for text, zimmer in faelle]
+        self.assertEqual(scores, sorted(scores))
+        # Die beiden Extremfälle müssen klar unterscheidbar sein.
+        self.assertGreater(scores[-1] - scores[0], 50)
+
+    def test_region_allein_kein_score_signal(self):
+        """Eine touristische Ortsangabe (z.B. Bodensee) wird nicht als
+        eigenes Signal geführt - identischer Text mit/ohne Ortsnennung liefert
+        denselben Score (siehe Auftrag Abschnitt 6)."""
+        ohne_ort, _, _ = _score_insights("unser ferienhotel bietet frühstück.", zimmeranzahl="10")
+        mit_ort, _, _ = _score_insights("unser ferienhotel am bodensee bietet frühstück.", zimmeranzahl="10")
+        self.assertEqual(ohne_ort, mit_ort)
 
 
 if __name__ == "__main__":
