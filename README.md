@@ -189,13 +189,16 @@ analyze.py                      Lokales CLI-Tool: Excel-Import -> Analyse -> Exc
 app.py                           Streamlit-Webapp: Excel-Upload -> Analyse -> Tabelle + Excel-Download
 config.yaml                      Spalten-Mapping & Analyse-Einstellungen
 requirements.txt
-.streamlit/secrets.toml.example  Beispiel-Datei, aktuell ungenutzt (app.py braucht keine Secrets)
+.streamlit/secrets.toml.example  Beispiel-Datei (HubSpot-Token, optionaler Search-API-Key - beide ungenutzt
+                                     funktioniert die App ganz normal ohne Secrets)
 logic/
   excel_import.py                 Liest HubSpot-Excel-Exporte gemäß config.yaml ein
   pipeline.py                      Gemeinsame Analyse-Pipeline (von analyze.py und app.py genutzt)
   website_crawler.py               Öffentliches Crawling der Hotel-Website
   dirs21_detection.py              Erkennung öffentlicher DIRS21-Nutzungs-Hinweise
-  room_count_detection.py           Öffentliche Zimmeranzahl-Recherche (reine Zusatzinformation)
+  room_count_detection.py           Zimmeranzahl-Grundregel: Excel > Website > sparsame Websuche (reine
+                                     Zusatzinformation)
+  web_search.py                    Optionale, modulare Websuche (nur Stufe 2 der Zimmeranzahl-Recherche)
   status_detection.py              Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
   scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
   recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung
@@ -215,6 +218,8 @@ können):
 - Unternehmensname (Pflicht)
 - Website/Domain (Pflicht - ohne Website ist keine Website-Analyse möglich)
 - Ort (optional)
+- Zimmeranzahl (optional - ein vorhandener Wert hat immer Vorrang vor jeder
+  Recherche, siehe nächster Abschnitt)
 - Adressgruppe (optional, aber wichtig für den CRM-Status)
 - DIRS21-ID (optional, reiner Identifikator)
 - HubSpot Record ID (optional)
@@ -224,25 +229,55 @@ Fehlt bei einem Unternehmen der Name oder die Website, wird der Datensatz
 trotzdem übernommen (Reihenfolge bleibt erhalten), aber über die Spalte
 `pruefhinweis` markiert. Komplett leere Zeilen werden übersprungen.
 
-## Zimmeranzahl (logic/room_count_detection.py)
+## Zimmeranzahl (logic/room_count_detection.py, logic/web_search.py)
 
-Zusätzlich zur fachlichen Logik ermittelt die App, wo öffentlich auffindbar,
-die Anzahl buchbarer Unterkunftseinheiten (Hotelzimmer, Gästezimmer,
-Einzel-/Doppelzimmer, Suiten, Apartments, Ferienwohnungen) und schreibt sie
-in die Spalte `zimmeranzahl`. Dafür werden ausschließlich bereits gecrawlte
-Seiten verwendet (keine zusätzlichen Requests). Wichtige Regeln:
+Die App ermittelt die Anzahl buchbarer Unterkunftseinheiten (Hotelzimmer,
+Gästezimmer, Einzel-/Doppelzimmer, Suiten, Apartments, Ferienwohnungen) und
+schreibt sie in die Spalte `zimmeranzahl`. Es gilt eine strikte Grundregel,
+in dieser Reihenfolge (jede Stufe nur, wenn die vorherige nichts liefert):
+
+1. **Excel/HubSpot-Wert**: Ist in der Input-Datei bereits eine Zimmeranzahl
+   vorhanden, wird dieser Wert unverändert übernommen (z.B. `12.0` -> `12`).
+   Es findet dann **keine** Recherche statt, und der Wert wird **nie**
+   überschrieben - auch nicht bei "Unternehmen erneut analysieren".
+2. **Offizielle Website**: Nur bereits gecrawlte Seiten werden ausgewertet
+   (keine zusätzlichen Requests). Ein hier gefundener Wert hat Vorrang vor
+   jeder externen Quelle, auch wenn diese abweicht.
+3. **Sparsame Websuche** (nur falls Website nichts liefert, siehe unten):
+   maximal 2 gezielte Suchanfragen (z.B. `"<Name>" Zimmer`,
+   `"<Name>" <Ort> Zimmer`), insgesamt maximal 3 externe Treffer geprüft,
+   Treffer auf der eigenen Hotel-Domain werden übersprungen (bereits in
+   Stufe 2 geprüft). Die Recherche stoppt, sobald ein belastbarer Wert
+   gefunden wurde.
+4. **Konfliktauflösung**: Stimmen mehrere externe Quellen überein, wird der
+   Wert übernommen. Widersprechen sie sich, bleibt das Feld leer
+   ("lieber leer als falsch").
+
+Weitere Regeln (Stufe 2 wie Stufe 1 gemeinsam):
 
 - Eine ausdrücklich genannte Gesamtzahl hat Vorrang vor Teilkategorien
   (z.B. "30 Zimmer, darunter 5 Suiten" -> 30, keine Doppelzählung).
 - Teilkategorien werden nur addiert, wenn sie klar als vollständige, durch
   "und"/"sowie" verbundene Aufzählung erkennbar sind (z.B. "20 Zimmer und
-  4 Apartments" -> 24).
+  zusätzlich 4 Apartments" -> 24).
 - Betten, Schlafplätze, maximale Personenzahl, Stellplätze, Tagungsräume
   und Restaurantplätze zählen ausdrücklich nicht als Zimmeranzahl.
 - Lässt sich keine belastbare Zahl eindeutig bestimmen, bleibt das Feld
   leer - es wird nichts geschätzt.
 - Die Zimmeranzahl ist eine reine Zusatzinformation und fließt an keiner
   Stelle in Fit-Score, Gesamtpriorität oder Vertriebslogik ein.
+- Die Extraktion arbeitet ausschließlich regelbasiert (Regex/HTML-Parsing),
+  es wird kein LLM zur Auswertung von Seiten oder Suchtreffern eingesetzt.
+
+**Websuche (Stufe 3) ist optional und modular** (`logic/web_search.py`):
+Ohne konfigurierten Such-API-Key läuft die App unverändert weiter, die
+Zimmeranzahl bleibt dann ggf. leer, wenn Excel und Website nichts liefern -
+kein Fehler, kein Absturz. Zur Aktivierung einen Key als
+`SEARCH_API_KEY` (optional zusätzlich `SEARCH_API_ENDPOINT`) über
+Streamlit Secrets oder eine Umgebungsvariable setzen (siehe
+`.streamlit/secrets.toml.example`) - niemals im Repository speichern. Es
+wird keine Google-Scraping-Lösung verwendet, sondern eine reguläre,
+dokumentierte Such-API (standardmäßig Bing Web Search v7).
 
 ## Fachliche Logik (Kurzüberblick)
 

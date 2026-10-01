@@ -11,7 +11,7 @@ from datetime import datetime
 
 from logic.dirs21_detection import detect_dirs21
 from logic.recommendations import build_recommendation
-from logic.room_count_detection import detect_room_count
+from logic.room_count_detection import resolve_room_count
 from logic.scoring import score_all_modules
 from logic.status_detection import (
     crm_status_label,
@@ -20,6 +20,7 @@ from logic.status_detection import (
     normalize_adressgruppe,
 )
 from logic.website_crawler import crawl_website
+from logic import web_search as web_search_module
 
 # Exakte Ausgabespalten - kompakt und vertriebsorientiert, keine
 # Begründungsspalten, keine weiteren Potenziale, kein Gesprächseinstieg.
@@ -113,6 +114,7 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
         pruefhinweise.append("Adressgruppe leer/unbekannt/sonstiger Wert - manuelle Prüfung empfohlen.")
 
     combined_text = ""
+    crawl_pages = None
     if not website:
         row["crawler_status"] = "Übersprungen (keine Website/Domain)"
         detection = dict(EMPTY_DETECTION)
@@ -132,15 +134,25 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
                 detection = dict(EMPTY_DETECTION)
                 pruefhinweise.append(f"DIRS21-Erkennung fehlgeschlagen: {exc}")
             combined_text = " ".join(crawl.pages.values())
+            crawl_pages = crawl.pages
 
-            # Zimmeranzahl: nutzt ausschließlich die bereits gecrawlten Seiten
-            # (crawl.pages) - es werden keine zusätzlichen Requests ausgelöst.
-            # Reine Zusatzinformation, fließt nicht in Fit-Score/Priorität ein.
-            _report(progress_callback, "Zimmeranzahl wird gesucht")
-            try:
-                row["zimmeranzahl"] = detect_room_count(crawl.pages)
-            except Exception as exc:
-                pruefhinweise.append(f"Zimmeranzahl-Suche fehlgeschlagen: {exc}")
+    # Zimmeranzahl: Excel-Wert hat immer Vorrang (keine Recherche), danach die
+    # bereits gecrawlten Seiten (crawl_pages, keine zusätzlichen Requests),
+    # erst zuletzt - und nur sparsam - eine optionale Websuche (Stufe 2, nur
+    # falls eine Search API konfiguriert ist, siehe logic/web_search.py).
+    # Reine Zusatzinformation, fließt nicht in Fit-Score/Priorität ein.
+    try:
+        row["zimmeranzahl"] = resolve_room_count(
+            excel_value=company.get("zimmeranzahl"),
+            pages=crawl_pages,
+            hotel_name=hotel_name,
+            ort=ort,
+            website=website,
+            web_search=web_search_module.search if web_search_module.is_configured() else None,
+            progress_callback=progress_callback,
+        )
+    except Exception as exc:
+        pruefhinweise.append(f"Zimmeranzahl-Suche fehlgeschlagen: {exc}")
 
     row["dirs21_direktbuchung_erkannt"] = detection["direktbuchung_erkannt"]
     row["dirs21_gutscheinshop_erkannt"] = detection["gutscheinshop_erkannt"]

@@ -89,13 +89,16 @@ class TestRoomCountDetection(unittest.TestCase):
         self.assertEqual(detect_room_count({}), "")
 
     def test_keine_zusaetzlichen_requests_reine_funktion_von_pages(self):
-        """detect_room_count darf ausschließlich mit den übergebenen,
-        bereits gecrawlten Seiten arbeiten - kein Netzwerkzugriff."""
+        """detect_room_count (Website-Stufe) darf ausschließlich mit den
+        übergebenen, bereits gecrawlten Seiten arbeiten - kein Netzwerkzugriff.
+        Die optionale Websuche (Stufe 2, resolve_room_count) darf gezielt und
+        budgetiert Requests auslösen - das wird separat in
+        tests/test_room_count_resolution.py getestet."""
         import inspect
 
-        import logic.room_count_detection as module
+        from logic.room_count_detection import detect_room_count
 
-        source = inspect.getsource(module)
+        source = inspect.getsource(detect_room_count)
         self.assertNotIn("requests.", source)
         self.assertNotIn("urlopen", source)
 
