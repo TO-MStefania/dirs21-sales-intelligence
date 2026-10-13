@@ -30,6 +30,19 @@ from ui.shared import (
     style_prioritaet,
 )
 
+BOOKING_TYPE_LABELS = {
+    "online_booking": "Onlinebuchung (echte Booking Engine)",
+    "booking_request": "Buchungsanfrage (nur Anfrageformular)",
+    "external_ota_only": "Nur externe OTA (z.B. Booking.com)",
+    "no_booking_detected": "Keine Buchungsmöglichkeit erkannt",
+    "unclear": "Nicht eindeutig",
+}
+COMPETITOR_STATUS_LABELS = {
+    "confirmed": "Bestätigt",
+    "possible": "Möglich (unbestätigt)",
+    "not_detected": "Nicht erkannt",
+}
+
 LIMIT_OPTIONS = ["5", "10", "20", "50", "Alle"]
 PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id"]
 
@@ -206,19 +219,46 @@ def _render_detail(original_index: int, row: pd.Series, config: dict) -> None:
 
         st.markdown("---")
         st.markdown('<div class="d21-section-title">B) Erkannte Systemlandschaft</div>', unsafe_allow_html=True)
-        c_ibe, c_pms, c_cm = st.columns(3)
+        booking_type = row.get("booking_type", "")
+        detection_status = row.get("competitor_detection_status", "")
+        c_booking, c_ibe, c_status = st.columns(3)
+        with c_booking:
+            detail_field("Booking Type", BOOKING_TYPE_LABELS.get(booking_type, booking_type or "–"))
         with c_ibe:
             detail_field("IBE / Booking Engine", row.get("ibe_anbieter", ""))
             detail_field("Erkennungssicherheit", row.get("mitbewerber_erkennungssicherheit", "") or "–")
+        with c_status:
+            detail_field("Status", COMPETITOR_STATUS_LABELS.get(detection_status, detection_status or "–"))
+        c_pms, c_cm = st.columns(2)
         with c_pms:
             detail_field("PMS", row.get("pms_anbieter", ""))
         with c_cm:
             detail_field("Channelmanager", row.get("channelmanager_anbieter", ""))
         if row.get("mitbewerber_erkennungsquelle"):
             st.caption(f"Erkannt durch: {row['mitbewerber_erkennungsquelle']}")
+        if booking_type == "booking_request":
+            st.caption(
+                "Auf der Website wurde lediglich ein Anfrageformular erkannt. Eine aktive Booking Engine "
+                "konnte nicht bestätigt werden."
+            )
         if row.get("ist_fokus_mitbewerber"):
             st.caption("⭐ Fokus-Mitbewerber (häufig im relevanten Pitch-/Wettbewerbsumfeld)")
         detail_field("DIRS21-Koexistenz", row.get("dirs21_koexistenz", "") or "–")
+
+        with st.expander("🔧 Debug: technische Rohdaten der Mitbewerber-Erkennung", expanded=False):
+            detail_field("Booking Entry URL", row.get("booking_entry_url", "") or "–")
+            detail_field("Booking Final URL (nach Redirect)", row.get("booking_final_url", "") or "–")
+            for label, key in (
+                ("Gefundene Domains", "detected_domains"),
+                ("Gefundene iFrames", "detected_iframes"),
+                ("Gefundene Scripts", "detected_scripts"),
+                ("Gefundene Query-Parameter", "detected_query_parameters"),
+            ):
+                values = row.get(key)
+                if not isinstance(values, list):
+                    values = []
+                detail_field(label, ", ".join(values) if values else "–")
+            detail_field("Technische Evidenz (stärkster Fund)", row.get("mitbewerber_technische_evidenz", "") or "–")
 
         st.markdown("---")
         st.markdown('<div class="d21-section-title">C) Kernpotenzial</div>', unsafe_allow_html=True)
