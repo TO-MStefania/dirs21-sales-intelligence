@@ -44,6 +44,12 @@ DETAIL_COLUMNS_NEUKUNDEN = [
     "bucket_fokus_mitbewerber", "bucket_datenqualitaet",
     "plus_fit_begruendung", "gutscheinshop_fit_begruendung", "mice_fit_begruendung",
     "event_assistent_fit_begruendung", "insights_fit_begruendung",
+    # Mitbewerber-/IBE-Erkennung: Booking-Type-Klassifikation + Status (siehe
+    # logic/competitor_detection.py) - NUR für die Webapp-Detail-/Debug-
+    # Ansicht, bewusst nicht im Excel-Export (siehe Auftrag Abschnitt 14/20).
+    "booking_type", "competitor_detection_status",
+    "booking_entry_url", "booking_final_url",
+    "detected_domains", "detected_iframes", "detected_scripts", "detected_query_parameters",
 ]
 
 APP_COLUMNS_NEUKUNDEN = RESULT_COLUMNS_NEUKUNDEN + DETAIL_COLUMNS_NEUKUNDEN
@@ -105,6 +111,14 @@ def analyze_neukunde(company: dict, config: dict, progress_callback=None) -> dic
     row["dirs21_koexistenz"] = detection["dirs21_koexistenz"]
     row["mitbewerber_erkennungsquelle"] = detection["mitbewerber_erkennungsquelle"]
     row["mitbewerber_technische_evidenz"] = detection["mitbewerber_technische_evidenz"]
+    row["booking_type"] = detection.get("booking_type", "")
+    row["competitor_detection_status"] = detection.get("competitor_detection_status", "")
+    row["booking_entry_url"] = detection.get("booking_entry_url", "")
+    row["booking_final_url"] = detection.get("booking_final_url", "")
+    row["detected_domains"] = detection.get("detected_domains", [])
+    row["detected_iframes"] = detection.get("detected_iframes", [])
+    row["detected_scripts"] = detection.get("detected_scripts", [])
+    row["detected_query_parameters"] = detection.get("detected_query_parameters", [])
     if detection.get("pruefhinweis_mitbewerber"):
         pruefhinweise.append(detection["pruefhinweis_mitbewerber"])
 

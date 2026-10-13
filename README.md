@@ -505,11 +505,38 @@ Prüfhinweis, falls technisch zufällig erkannt).
 Neukunde, Interessent oder ehemaliger Kunde enthalten; keine zusätzlichen
 Lead-Status-Felder (HubSpot pflegt das bereits).
 
-**Mitbewerber-Erkennung ist hier zentral** (`logic/competitor_detection.py`,
-unverändert wiederverwendet) - IBE/Booking Engine, Channelmanager und PMS
-bleiben strikt getrennt; eine erkannte IBE bedeutet nie automatisch, dass
-auch das PMS desselben Anbieters genutzt wird (PMS/Channelmanager bleiben
-technisch "Nicht eindeutig erkannt", siehe Knowledgebase-Abschnitt unten).
+**Mitbewerber-Erkennung ist hier zentral** (`logic/competitor_detection.py`)
+- IBE/Booking Engine, Channelmanager und PMS bleiben strikt getrennt; eine
+erkannte IBE bedeutet nie automatisch, dass auch das PMS desselben Anbieters
+genutzt wird (PMS/Channelmanager bleiben technisch "Nicht eindeutig erkannt",
+siehe Knowledgebase-Abschnitt unten).
+
+**Booking-Type-Klassifikation (`booking_type`)** - bevor überhaupt ein
+IBE-Anbieter genannt wird, wird zuerst geprüft, WAS auf der Website
+überhaupt vorhanden ist: `online_booking` (echte Booking Engine mit
+Verfügbarkeits-/Preisprüfung), `booking_request` (reines Anfrageformular -
+Name/E-Mail/Telefon/Anreise/Abreise/Personen/Nachricht + "Anfrage senden",
+**ausdrücklich KEINE Booking Engine**), `external_ota_only` (nur Verweis auf
+Booking.com & Co.), `no_booking_detected` oder `unclear`. Ein reines
+Anfrageformular führt NIE zu einem konkreten IBE-Anbieternamen, selbst wenn
+ein Anbieter irgendwo schwach erwähnt wird.
+
+**Evidenz-Hierarchie je Fingerprint-Fund** (abgeleitet aus Signal-Typ +
+Fundort, siehe `logic/competitor_detection.py`-Moduldocstring): A) aktiver
+Buchungsfluss (Domain/Query-Parameter/iFrame/Script im tatsächlichen
+Buchungslink/-button, auch über `onclick`/`data-url` ohne normalen `href`)
+-> sehr stark, kann allein "hoch"/`confirmed` ergeben. B) technische
+Zusatzevidenz (generisches Keyword im technischen Kontext/Script) ->
+unterstützend, für sich allein nie "hoch". C) Datenschutz-/Impressum-Seite
+-> nur unterstützend. D) normaler Fließtext (Blog, Referenz) -> NIE
+ausreichend für eine aktive Nutzung. `competitor_detection_status`
+(`confirmed`/`possible`/`not_detected`) fasst das zusammen; die Webapp-
+Detailansicht zeigt zusätzlich "Erkannt durch: ..." sowie einen
+eingeklappten Debug-Bereich mit den technischen Rohdaten (gefundene
+Domains/iFrames/Scripts/Query-Parameter, Buchungslink + finale Redirect-URL).
+Redirect-Verfolgung und ein optionaler Playwright-Fallback für unklare Fälle
+sind als Funktionen vorhanden, standardmäßig aber deaktiviert, um keine
+zusätzlichen Live-Requests während der normalen Analyse auszulösen.
 
 **Fokus-Mitbewerber** (`knowledge/competitors.yaml` ->
 `sales_relevance.focus_competitor: true`): Seekda, HotelNetSolutions,
