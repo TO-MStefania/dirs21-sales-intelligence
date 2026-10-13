@@ -8,9 +8,15 @@ DIRS21 Sales Knowledge Base v0.3. Arbeitet ausschließlich mit der
 hochgeladenen Excel-Datei - keine HubSpot-API-Anbindung, keine Secrets nötig.
 Nutzt dieselbe Analyse-Pipeline wie das lokale CLI-Tool (analyze.py).
 
-Zwei Hauptreiter (siehe Auftrag "Routenplanung"):
+Drei Hauptreiter:
 1. Sales Intelligence - die bestehende, unveränderte Analyse.
-2. Routenplanung - eigenständiger Funktionsbereich für die Tourenplanung
+2. Neukundenakquise - Competitive Gap Analysis (siehe
+   logic/competitor_detection.py, logic/competitor_comparison.py): erkennt
+   technisch den aktuell eingesetzten Mitbewerber und stellt ihn den
+   unveränderten DIRS21-Fit-Scores gegenüber. Erzeugt bewusst KEINE
+   Gesprächseinstiege/Vertriebsansätze. Liest lesend aus denselben
+   Sales-Intelligence-Analyseergebnissen, verändert dort aber nichts.
+3. Routenplanung - eigenständiger Funktionsbereich für die Tourenplanung
    vereinbarter Vor-Ort-Termine (siehe logic/route_planner.py). Liest
    lesend aus denselben Sales-Intelligence-Analyseergebnissen (Ranking von
    Zusatzvorschlägen), verändert dort aber nichts.
@@ -30,13 +36,25 @@ import yaml
 
 from logic.excel_import import ExcelImportError, read_companies
 from logic.exporter import (
+    COMPETITIVE_GAP_STYLES,
+    DIRS21_KOEXISTENZ_STYLES,
     FIT_BAND_STYLES,
     GESAMTPRIORITAET_STYLES,
+    MITBEWERBER_SICHERHEIT_STYLES,
     export_to_excel_bytes,
     export_workbook_bytes,
 )
-from logic.pipeline import FIT_BEGRUENDUNG_COLUMNS, RESULT_COLUMNS, analyze_company
+from logic.pipeline import (
+    COMPETITOR_DETAIL_COLUMNS,
+    FIT_BEGRUENDUNG_COLUMNS,
+    RESULT_COLUMNS,
+    analyze_company,
+)
 from logic.scoring import fit_band
+from logic.competitor_comparison import build_comparison
+from logic.competitor_detection import EMPTY_DETECTION as EMPTY_COMPETITOR_DETECTION
+from logic.competitor_detection import load_knowledgebase
+from logic.status_detection import normalize_adressgruppe
 from logic import geocoding as geocoding_module
 from logic import routing_provider
 from logic.route_import import (
@@ -60,11 +78,11 @@ from logic.route_planner import (
 datetime = dt.datetime
 
 # Alle Spalten, die die Webapp intern vorhält - RESULT_COLUMNS (Excel-Export/
-# CLI-identisch) plus die kurzen Fit-Begründungen je Produkt, die NUR in der
-# Webapp-Detailansicht angezeigt werden (siehe logic/pipeline.py). Der
-# Excel-Download verwendet weiterhin ausschließlich RESULT_COLUMNS, damit die
-# Begründungen nie im Export landen.
-APP_COLUMNS = RESULT_COLUMNS + FIT_BEGRUENDUNG_COLUMNS
+# CLI-identisch) plus die kurzen Fit-Begründungen je Produkt und die
+# Mitbewerber-/Competitive-Gap-Details (siehe logic/pipeline.py), die NUR in
+# der Webapp-Detailansicht angezeigt werden. Der Excel-Download verwendet
+# weiterhin ausschließlich RESULT_COLUMNS, damit diese nie im Export landen.
+APP_COLUMNS = RESULT_COLUMNS + FIT_BEGRUENDUNG_COLUMNS + COMPETITOR_DETAIL_COLUMNS
 
 st.set_page_config(page_title="DIRS21 Sales Intelligence", page_icon="🏨", layout="wide")
 
@@ -1287,6 +1305,331 @@ def render_routenplanung_tab(config: dict, uploaded_bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Reiter 3: Neukundenakquise (Competitive Gap Analysis)
+#
+# WICHTIG (siehe Auftrag): Dieser Reiter erzeugt KEINE Gesprächseinstiege,
+# Gesprächsleitfäden oder Vertriebsansätze - er zeigt ausschließlich die
+# nüchterne Einstufung "Wo besteht gegenüber dem technisch erkannten
+# Mitbewerber ein belegbares Differenzierungspotenzial?" (siehe
+# logic/competitor_comparison.py). Verwendet ausschließlich bereits in
+# logic/pipeline.py berechnete Ergebnisse (dieselben result_rows wie der
+# Reiter "Sales Intelligence") - keine eigene Analyse, kein eigener Upload.
+# ---------------------------------------------------------------------------
+NEUKUNDEN_RELEVANTE_CRM_STATUS = ["Akquise", "Neukunde", "Interessent", "Ehemaliger Kunde"]
+
+NEUKUNDEN_COMPACT_COLUMNS = [
+    "hotel_name", "ort", "adressgruppe", "zimmeranzahl", "mitbewerber", "mitbewerber_typ",
+    "staerkstes_dirs21_potenzial", "staerkstes_dirs21_potenzial_fit", "competitive_gap", "neukunden_prioritaet",
+]
+NEUKUNDEN_COMPACT_LABELS = {
+    "hotel_name": "Unternehmen",
+    "ort": "Ort",
+    "adressgruppe": "Adressgruppe",
+    "zimmeranzahl": "Zimmer",
+    "mitbewerber": "Mitbewerber",
+    "mitbewerber_typ": "Mitbewerber-Typ",
+    "staerkstes_dirs21_potenzial": "Top DIRS21 Potenzial",
+    "staerkstes_dirs21_potenzial_fit": "Fit",
+    "competitive_gap": "Competitive Gap",
+    "neukunden_prioritaet": "Neukunden-Priorität",
+}
+
+
+def _style_mitbewerber_sicherheit(value):
+    style = MITBEWERBER_SICHERHEIT_STYLES.get(str(value).strip())
+    if not style:
+        return ""
+    bg, fg = style
+    return f"background-color: {_argb_to_css(bg)}; color: {_argb_to_css(fg)}"
+
+
+def _style_competitive_gap(value):
+    style = COMPETITIVE_GAP_STYLES.get(str(value).strip())
+    if not style:
+        return ""
+    bg, fg = style
+    return f"background-color: {_argb_to_css(bg)}; color: {_argb_to_css(fg)}"
+
+
+def render_neukunden_filters(df: pd.DataFrame) -> dict:
+    with st.expander("Filter", expanded=False):
+        row1 = st.columns(4)
+        adressgruppe = row1[0].multiselect("Adressgruppe", sorted(a for a in df["adressgruppe"].dropna().unique() if a))
+        mitbewerber = row1[1].multiselect("Mitbewerber", sorted(df["mitbewerber"].dropna().unique()))
+        mitbewerber_typ = row1[2].multiselect("Mitbewerber-Typ", sorted(t for t in df["mitbewerber_typ"].dropna().unique() if t))
+        koexistenz = row1[3].multiselect("DIRS21-Koexistenz", sorted(k for k in df["dirs21_koexistenz"].dropna().unique() if k))
+
+        row2 = st.columns(4)
+        top_potenzial = row2[0].multiselect("Top DIRS21 Potenzial", sorted(df["staerkstes_dirs21_potenzial"].dropna().unique()))
+        gap = row2[1].multiselect("Competitive Gap", sorted(g for g in df["competitive_gap"].dropna().unique() if g))
+        prioritaet = row2[2].multiselect("Neukunden-Priorität", sorted(df["neukunden_prioritaet"].dropna().unique()))
+        ort = row2[3].multiselect("Ort", sorted(o for o in df["ort"].dropna().unique() if o))
+
+        row3 = st.columns(3)
+        min_zimmer = row3[0].number_input("Zimmeranzahl mind.", min_value=0, value=0, step=1, key="neukunden_min_zimmer")
+        max_zimmer_aktiv = row3[1].checkbox("Zimmeranzahl Obergrenze aktivieren", key="neukunden_max_zimmer_aktiv")
+        max_zimmer = row3[2].number_input(
+            "Zimmeranzahl max.", min_value=0, value=200, step=1, disabled=not max_zimmer_aktiv, key="neukunden_max_zimmer",
+        )
+
+        nur_relevante_adressgruppen = st.checkbox(
+            "Nur Akquise/Neukunde/Interessent/ehemalige Kunden", value=True, key="neukunden_nur_relevante",
+            help="Der Reiter ist primär für diese Adressgruppen gedacht (siehe Auftrag) - Bestandskunden "
+                 "bleiben über diesen Schalter trotzdem erreichbar.",
+        )
+
+    return {
+        "adressgruppe": adressgruppe,
+        "mitbewerber": mitbewerber,
+        "mitbewerber_typ": mitbewerber_typ,
+        "koexistenz": koexistenz,
+        "top_potenzial": top_potenzial,
+        "gap": gap,
+        "prioritaet": prioritaet,
+        "ort": ort,
+        "min_zimmer": min_zimmer,
+        "max_zimmer": max_zimmer if max_zimmer_aktiv else None,
+        "nur_relevante_adressgruppen": nur_relevante_adressgruppen,
+    }
+
+
+def apply_neukunden_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    result = df.copy()
+
+    if filters["nur_relevante_adressgruppen"]:
+        result = result[result["crm_status"].isin(NEUKUNDEN_RELEVANTE_CRM_STATUS)]
+    if filters["adressgruppe"]:
+        result = result[result["adressgruppe"].isin(filters["adressgruppe"])]
+    if filters["mitbewerber"]:
+        result = result[result["mitbewerber"].isin(filters["mitbewerber"])]
+    if filters["mitbewerber_typ"]:
+        result = result[result["mitbewerber_typ"].isin(filters["mitbewerber_typ"])]
+    if filters["koexistenz"]:
+        result = result[result["dirs21_koexistenz"].isin(filters["koexistenz"])]
+    if filters["top_potenzial"]:
+        result = result[result["staerkstes_dirs21_potenzial"].isin(filters["top_potenzial"])]
+    if filters["gap"]:
+        result = result[result["competitive_gap"].isin(filters["gap"])]
+    if filters["prioritaet"]:
+        result = result[result["neukunden_prioritaet"].isin(filters["prioritaet"])]
+    if filters["ort"]:
+        result = result[result["ort"].isin(filters["ort"])]
+
+    if filters["min_zimmer"] > 0 or filters["max_zimmer"] is not None:
+        zimmer = _numeric(result["zimmeranzahl"])
+        mask = zimmer.notna() & (zimmer >= filters["min_zimmer"])
+        if filters["max_zimmer"] is not None:
+            mask &= zimmer <= filters["max_zimmer"]
+        result = result[mask]
+
+    return result
+
+
+def render_neukunden_result_table(df: pd.DataFrame) -> None:
+    display_df = df[NEUKUNDEN_COMPACT_COLUMNS].rename(columns=NEUKUNDEN_COMPACT_LABELS)
+    fit_col = NEUKUNDEN_COMPACT_LABELS["staerkstes_dirs21_potenzial_fit"]
+    gap_col = NEUKUNDEN_COMPACT_LABELS["competitive_gap"]
+    prio_col = NEUKUNDEN_COMPACT_LABELS["neukunden_prioritaet"]
+
+    display_df = display_df.assign(**{fit_col: _numeric(display_df[fit_col])})
+
+    styler = (
+        display_df.style
+        .map(_style_fit_score, subset=[fit_col])
+        .map(_style_competitive_gap, subset=[gap_col])
+        .map(_style_priority, subset=[prio_col])
+        .hide(axis="index")
+    )
+    st.dataframe(styler, width="stretch", height=min(560, 60 + 36 * len(display_df)))
+
+
+def _apply_manuelle_korrektur(row: dict, corrected_name: str, config: dict) -> dict:
+    """Manuelle Korrektur der Mitbewerber-Erkennung NUR für die aktuelle
+    Session (siehe Auftrag Abschnitt 39) - überschreibt nie die globale
+    Knowledgebase (knowledge/competitors.yaml). Wird der eingegebene Name in
+    der Knowledgebase gefunden, werden Typ/Koexistenz/Competitive-Gap/
+    Neukunden-Priorität konsistent auf Basis dieses Anbieters neu berechnet
+    (über dieselbe logic/competitor_comparison.build_comparison wie bei der
+    automatischen Erkennung) - die DIRS21-Fit-Scores selbst bleiben davon
+    unberührt (siehe Auftrag "Mitbewerber darf Fit nicht verändern")."""
+    row = dict(row)
+    name = (corrected_name or "").strip()
+    providers = load_knowledgebase()
+    matched_key = next(
+        (key for key, p in providers.items() if p.get("name", "").strip().lower() == name.lower()), None
+    )
+
+    detection = dict(EMPTY_COMPETITOR_DETECTION)
+    detection["mitbewerber_erkennungssicherheit"] = "manuell korrigiert"
+    detection["mitbewerber_erkennungsquelle"] = "Manuell durch Nutzer korrigiert (nur diese Session)."
+    if matched_key:
+        provider = providers[matched_key]
+        detection["mitbewerber_hauptanbieter"] = provider.get("name", name)
+        detection["mitbewerber_typ"] = provider.get("typ", "")
+        detection["dirs21_koexistenz"] = provider.get("dirs21_coexistence", "nicht bestätigt")
+        detection["_provider_key"] = matched_key
+    else:
+        detection["mitbewerber_hauptanbieter"] = name or NICHT_ERKANNT_LABEL
+
+    row["mitbewerber"] = detection["mitbewerber_hauptanbieter"]
+    row["mitbewerber_typ"] = detection["mitbewerber_typ"]
+    row["mitbewerber_erkennungssicherheit"] = detection["mitbewerber_erkennungssicherheit"]
+    row["dirs21_koexistenz"] = detection["dirs21_koexistenz"]
+    row["mitbewerber_erkennungsquelle"] = detection["mitbewerber_erkennungsquelle"]
+
+    adressgruppe_mapping = config.get("adressgruppe_mapping", {})
+    canonical = normalize_adressgruppe(row.get("adressgruppe", ""), adressgruppe_mapping)
+    comparison = build_comparison(row, detection, canonical)
+    row["staerkstes_differenzierungspotenzial"] = comparison["staerkstes_differenzierungspotenzial"]
+    row["staerkstes_differenzierungspotenzial_score"] = comparison["staerkstes_differenzierungspotenzial_score"]
+    row["competitive_gap"] = comparison["competitive_gap"]
+    row["neukunden_prioritaet"] = comparison["neukunden_prioritaet"]
+    row["mitbewerber_produktmatrix"] = comparison.get("produktmatrix", [])
+    return row
+
+
+NICHT_ERKANNT_LABEL = "Nicht eindeutig erkannt"
+
+
+def render_neukunden_detail(original_index: int, row: pd.Series, config: dict) -> None:
+    row_dict = row.to_dict()
+    korrekturen = st.session_state.setdefault("neukunden_korrekturen", {})
+    if original_index in korrekturen:
+        row_dict = korrekturen[original_index]
+
+    label = (
+        f"{row_dict['hotel_name']} — {row_dict.get('crm_status', '') or 'unbekannt'} — "
+        f"Mitbewerber: {row_dict.get('mitbewerber', NICHT_ERKANNT_LABEL)} — "
+        f"Neukunden-Priorität {row_dict.get('neukunden_prioritaet', '?')}"
+    )
+    with st.expander(label):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            _detail_field("Unternehmen", row_dict["hotel_name"])
+            _detail_field("Ort", row_dict.get("ort", ""))
+        with c2:
+            _detail_field("Adressgruppe", row_dict.get("adressgruppe", ""))
+            _detail_field("Zimmeranzahl", row_dict.get("zimmeranzahl", ""))
+        with c3:
+            _detail_field("DIRS21-ID", row_dict.get("dirs21_id", ""))
+            _detail_field("CRM-Status", row_dict.get("crm_status", ""))
+
+        st.markdown("---")
+        st.markdown('<div class="d21-section-title">Erkannte Systemlandschaft</div>', unsafe_allow_html=True)
+        c_ibe, c_pms, c_cm = st.columns(3)
+        with c_ibe:
+            _detail_field("IBE / Booking Engine", row_dict.get("ibe_anbieter", NICHT_ERKANNT_LABEL))
+            _detail_field("Sicherheit", row_dict.get("mitbewerber_ibe_sicherheit", "") or "–")
+        with c_pms:
+            _detail_field("PMS", row_dict.get("pms_anbieter", NICHT_ERKANNT_LABEL))
+            _detail_field("Sicherheit", row_dict.get("mitbewerber_pms_sicherheit", "") or "–")
+        with c_cm:
+            _detail_field("Channelmanager", row_dict.get("channelmanager_anbieter", NICHT_ERKANNT_LABEL))
+            _detail_field("Sicherheit", row_dict.get("mitbewerber_channelmanager_sicherheit", "") or "–")
+        if row_dict.get("mitbewerber_erkennungsquelle"):
+            st.caption(f"Erkannt durch: {row_dict['mitbewerber_erkennungsquelle']}")
+        if row_dict.get("mitbewerber_technische_evidenz"):
+            st.caption(f"Technische Evidenz: {row_dict['mitbewerber_technische_evidenz']}")
+
+        st.markdown("---")
+        _detail_field("DIRS21-Koexistenz", row_dict.get("dirs21_koexistenz", "") or "–")
+        if row_dict.get("pruefhinweis_mitbewerber"):
+            st.caption(f"Prüfhinweis: {row_dict['pruefhinweis_mitbewerber']}")
+
+        st.markdown("---")
+        st.markdown('<div class="d21-section-title">Produktmatrix - DIRS21-Fit vs. Mitbewerber-Abdeckung</div>', unsafe_allow_html=True)
+        st.caption(
+            "Der DIRS21-Fit stammt ausschließlich aus der bestehenden, unveränderten Scoring-/"
+            "Empfehlungslogik (logic/scoring.py, logic/recommendations.py) - der Mitbewerber verändert "
+            "diesen Fit nie, sondern ausschließlich die Bewertung der Wettbewerbschance (Competitive Gap)."
+        )
+        matrix = row_dict.get("mitbewerber_produktmatrix") or []
+        if matrix:
+            matrix_df = pd.DataFrame(matrix).rename(columns={
+                "modul": "DIRS21-Produkt", "fit": "Fit", "capability_anzeige": "Mitbewerber-Abdeckung",
+                "competitive_gap": "Competitive Gap",
+            })[["DIRS21-Produkt", "Fit", "Mitbewerber-Abdeckung", "Competitive Gap"]]
+            styler = (
+                matrix_df.style
+                .map(_style_competitive_gap, subset=["Competitive Gap"])
+                .map(_style_fit_score, subset=["Fit"])
+                .hide(axis="index")
+            )
+            st.dataframe(styler, width="stretch")
+
+        st.markdown("---")
+        _detail_field(
+            "Stärkstes Differenzierungspotenzial",
+            f"{row_dict.get('staerkstes_differenzierungspotenzial', '') or '–'} "
+            f"(Competitive Gap: {row_dict.get('competitive_gap', '') or '–'})",
+        )
+        _detail_field(
+            "Top DIRS21 Potenzial (reiner Fit, siehe Sales Intelligence)",
+            f"{row_dict.get('staerkstes_dirs21_potenzial', '')} ({row_dict.get('staerkstes_dirs21_potenzial_fit', '')})",
+        )
+
+        with st.expander("Mitbewerber-Erkennung korrigieren"):
+            st.caption(
+                "Gilt nur für die aktuelle Session (siehe Auftrag) - überschreibt nie die Knowledgebase "
+                "knowledge/competitors.yaml. Name eines bekannten Anbieters eingeben, um Competitive Gap "
+                "und Neukunden-Priorität konsistent neu zu berechnen; ein unbekannter Name ändert nur die "
+                "Anzeige."
+            )
+            neuer_name = st.text_input(
+                "Korrigierter Mitbewerber", value=row_dict.get("mitbewerber", ""), key=f"korrektur_name_{original_index}",
+            )
+            if st.button("Korrektur übernehmen", key=f"korrektur_uebernehmen_{original_index}"):
+                korrekturen[original_index] = _apply_manuelle_korrektur(row_dict, neuer_name, config)
+                st.rerun()
+            if original_index in korrekturen and st.button("Korrektur zurücksetzen", key=f"korrektur_reset_{original_index}"):
+                del korrekturen[original_index]
+                st.rerun()
+
+
+def render_neukundenakquise_tab(config: dict) -> None:
+    if "result_rows" not in st.session_state or not st.session_state["result_rows"]:
+        st.info(
+            "Bitte zuerst im Reiter \"Sales Intelligence\" eine Analyse durchführen - dieser Reiter nutzt "
+            "dieselben Analyseergebnisse (keine zusätzliche Excel-Datei nötig)."
+        )
+        return
+
+    full_df = pd.DataFrame(st.session_state["result_rows"], columns=APP_COLUMNS)
+    full_df = _ensure_columns(full_df, APP_COLUMNS)
+    # object-Dtype erzwingen, BEVOR Korrekturwerte (siehe unten) einzelne
+    # Zellen überschreiben - verhindert einen TypeError, falls pandas eine
+    # Spalte (z.B. "staerkstes_dirs21_potenzial_fit") als reinen String-Typ
+    # inferiert hat und eine Korrektur dort einen int schreiben will.
+    full_df = full_df.astype(object)
+
+    korrekturen = st.session_state.setdefault("neukunden_korrekturen", {})
+    for idx, korrigierte_zeile in korrekturen.items():
+        if idx in full_df.index:
+            for col, value in korrigierte_zeile.items():
+                if col in full_df.columns:
+                    full_df.at[idx, col] = value
+
+    st.caption(
+        f"{len(full_df)} Unternehmen aus der Sales-Intelligence-Analyse. Zeigt Competitive-Gap-Potenzial "
+        "gegenüber technisch erkannten Mitbewerbern - keine Gesprächseinstiege oder Vertriebsansätze."
+    )
+
+    filters = render_neukunden_filters(full_df)
+    filtered_df = apply_neukunden_filters(full_df, filters)
+
+    st.markdown('<div class="d21-section-title">Übersicht</div>', unsafe_allow_html=True)
+    st.caption(f"{len(filtered_df)} von {len(full_df)} Unternehmen (nach aktuellen Filtern)")
+    if filtered_df.empty:
+        st.warning("Keine Unternehmen für die aktuellen Filter gefunden.")
+        return
+    render_neukunden_result_table(filtered_df)
+
+    st.markdown('<div class="d21-section-title">Detailansicht</div>', unsafe_allow_html=True)
+    for idx, row in filtered_df.iterrows():
+        render_neukunden_detail(idx, row, config)
+
+
+# ---------------------------------------------------------------------------
 # Hauptablauf
 # ---------------------------------------------------------------------------
 def main():
@@ -1317,9 +1660,13 @@ def main():
     # dieselbe hochgeladene Datei unabhängig voneinander ein).
     uploaded_bytes = uploaded_file.getvalue() if uploaded_file else None
 
-    tab_sales, tab_route = st.tabs(["📊 Sales Intelligence", "🗺️ Routenplanung"])
+    tab_sales, tab_neukunden, tab_route = st.tabs(
+        ["📊 Sales Intelligence", "🎯 Neukundenakquise", "🗺️ Routenplanung"]
+    )
     with tab_sales:
         render_sales_intelligence_tab(config, io.BytesIO(uploaded_bytes) if uploaded_bytes else None)
+    with tab_neukunden:
+        render_neukundenakquise_tab(config)
     with tab_route:
         render_routenplanung_tab(config, uploaded_bytes)
 

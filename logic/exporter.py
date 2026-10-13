@@ -51,15 +51,49 @@ FIT_SCORE_COLUMNS = {
     "event_assistent_fit_score",
     "insights_fit_score",
     "fachliche_top_empfehlung_score",
+    "staerkstes_dirs21_potenzial_fit",
 }
 
 # Gesamtpriorität A-D: eigene Ampel (A kräftiger als der "sehr hoch"-Fit-Ton,
-# damit die höchste Priorität optisch heraussticht).
+# damit die höchste Priorität optisch heraussticht). Wird auch für die
+# unabhängige neukunden_prioritaet (siehe logic/competitor_comparison.py) im
+# Reiter "Neukundenakquise" wiederverwendet - dieselbe A-D-Ampel, aber ohne
+# die fachliche Logik zu vermischen.
 GESAMTPRIORITAET_STYLES = {
     "A": ("FF2E7D32", "FFFFFFFF"),  # kräftiges Grün
     "B": ("FFC6EFCE", "FF1E4620"),  # helles Grün
     "C": ("FFFFD966", "FF7F6000"),  # Gelb/Orange
     "D": ("FFFFC7CE", "FF9C0006"),  # helles Rot
+}
+
+# Mitbewerber-Erkennungssicherheit (siehe logic/competitor_detection.py,
+# Auftrag "Neukundenakquise" Abschnitt 45).
+MITBEWERBER_SICHERHEIT_STYLES = {
+    "hoch": ("FFC6EFCE", "FF1E4620"),           # hellgrün
+    "mittel": ("FFFFE699", "FF7F6000"),         # gelb
+    "nicht eindeutig": ("FFF8CBAD", "FF974706"),  # neutral/orange
+}
+
+# DIRS21-Koexistenz (siehe knowledge/competitors.yaml -> dirs21_coexistence,
+# Auftrag "Neukundenakquise" Abschnitt 45).
+DIRS21_KOEXISTENZ_STYLES = {
+    "ja": ("FFC6EFCE", "FF1E4620"),             # grün
+    "nein": ("FFF8CBAD", "FF974706"),           # hellrot/orange
+    "nicht bestätigt": ("FFFFE699", "FF7F6000"),  # gelb
+    "intern prüfen": ("FFFFE699", "FF7F6000"),  # gelb
+}
+
+# Competitive-Gap-Status (siehe logic/competitor_comparison.py) - je
+# deutlicher der Gap, desto kräftiger das Grün; "Unbekannt" bewusst neutral
+# (kein Rot/Grün, da keine belastbare Aussage möglich ist, siehe Auftrag
+# "keine freien Mitbewerberbehauptungen").
+COMPETITIVE_GAP_STYLES = {
+    "Sehr hoch": ("FF2E7D32", "FFFFFFFF"),
+    "Hoch": ("FFC6EFCE", "FF1E4620"),
+    "Mittel": ("FFFFE699", "FF7F6000"),
+    "Gering": ("FFF8CBAD", "FF974706"),
+    "Kein klarer Gap": ("FFEEF1F5", "FF5B6472"),
+    "Unbekannt": ("FFEEF1F5", "FF5B6472"),
 }
 
 PRUEFHINWEIS_FILL = "FFFCE4D6"          # dezentes Warn-Orange
@@ -118,12 +152,33 @@ def _format_workbook(worksheet, df: pd.DataFrame) -> None:
             cell = worksheet[f"{column_letters[column]}{row_idx}"]
             cell.alignment = WRAP_ALIGNMENT if column in WRAP_COLUMNS else UNIFORM_ALIGNMENT
 
-            if column == "gesamtprioritaet":
+            if column in ("gesamtprioritaet", "neukunden_prioritaet"):
                 style = GESAMTPRIORITAET_STYLES.get(str(cell.value).strip())
                 if style:
                     fill_color, font_color = style
                     cell.fill = PatternFill("solid", fgColor=fill_color)
                     cell.font = Font(bold=True, color=font_color)
+
+            elif column == "mitbewerber_erkennungssicherheit":
+                style = MITBEWERBER_SICHERHEIT_STYLES.get(str(cell.value).strip())
+                if style:
+                    fill_color, font_color = style
+                    cell.fill = PatternFill("solid", fgColor=fill_color)
+                    cell.font = Font(color=font_color)
+
+            elif column == "dirs21_koexistenz":
+                style = DIRS21_KOEXISTENZ_STYLES.get(str(cell.value).strip())
+                if style:
+                    fill_color, font_color = style
+                    cell.fill = PatternFill("solid", fgColor=fill_color)
+                    cell.font = Font(color=font_color)
+
+            elif column == "competitive_gap":
+                style = COMPETITIVE_GAP_STYLES.get(str(cell.value).strip())
+                if style:
+                    fill_color, font_color = style
+                    cell.fill = PatternFill("solid", fgColor=fill_color)
+                    cell.font = Font(color=font_color)
 
             elif column in FIT_SCORE_COLUMNS:
                 style = _fit_score_style(cell.value)
