@@ -89,6 +89,25 @@ analysis:
   # analyze.py: nach wie vielen Unternehmen ein Zwischenstand der
   # Ergebnis-Excel gespeichert wird.
   save_interval: 5
+  # Deep-Detection der Mitbewerber-/IBE-Erkennung (Stufe 2-4, siehe
+  # logic/booking_flow_detection.py und logic/competitor_detection.py) -
+  # rendert die Website mit Chromium/Playwright und klickt den Buchungs-
+  # Einstiegspunkt, um JavaScript-basierte Booking Engines zu erkennen, die
+  # in der rein statischen Stufe-1-Analyse unsichtbar bleiben (siehe Auftrag
+  # "Mitbewerber-/Booking-Engine-Erkennung gezielt verbessern"). Läuft NUR,
+  # wenn Stufe 1 keinen eindeutigen (Tier-A-)Treffer liefert (Performance,
+  # siehe Auftrag Abschnitt 15/20) - fehlt Playwright/der Browser, wird dies
+  # automatisch und ohne Fehler übersprungen. Auf false setzen, um die
+  # Neukunden-Analyse zu beschleunigen und ausschließlich die statische
+  # Analyse zu verwenden.
+  enable_deep_booking_detection: true
+  # Timeouts in Millisekunden für die Deep-Detection (siehe
+  # logic/booking_flow_detection.py) - zentral konfigurierbar, damit eine
+  # einzelne, langsame/unerreichbare Website nie den gesamten Analyse-Batch
+  # blockiert (siehe Auftrag Abschnitt 20).
+  deep_detection_nav_timeout_ms: 12000
+  deep_detection_click_timeout_ms: 3000
+  deep_detection_settle_timeout_ms: 4000
 
 # Routenplanung (eigener Webapp-Reiter, siehe logic/route_planner.py).
 # Termine werden primär DIREKT IN DER WEBAPP angelegt (siehe Auftrag) und nur

@@ -104,6 +104,53 @@ class TestNeukundenDetailBookingType(unittest.TestCase):
         self.assertEqual(len(at.exception), 0, msg=f"Unerwartete Exceptions: {list(at.exception)}")
         self.assertTrue(self._render_complete(at))
 
+    def test_unbekannte_booking_engine_mit_deep_detection_debugdaten_wird_ohne_absturz_angezeigt(self):
+        at = AppTest.from_file(self.script_path)
+        at.session_state["neukunden_input_df"] = [{"hotel_name": "Hotel Unbekannt", "website": "unbekannt.de"}]
+        at.session_state["neukunden_results_df"] = [
+            {
+                "hotel_name": "Hotel Unbekannt", "website": "unbekannt.de", "ort": "Beispielort",
+                "zimmeranzahl": "40", "adressgruppe": "Akquise", "dirs21_id": "",
+                "mitbewerber": "Unbekannte IBE", "mitbewerber_typ": "",
+                "mitbewerber_erkennungssicherheit": "mittel",
+                "mitbewerber_erkennungsquelle": (
+                    "Buchungs-Button führt zu einer externen, aktiven Booking Engine "
+                    "(Domain: booking.irgendein-fremdanbieter.com), die keinem bekannten Anbieter in der "
+                    "Knowledgebase zugeordnet werden konnte."
+                ),
+                "mitbewerber_technische_evidenz": "booking.irgendein-fremdanbieter.com",
+                "booking_type": "online_booking",
+                "competitor_detection_status": "possible",
+                "provider_status": "unknown_booking_engine",
+                "unknown_booking_domain": "booking.irgendein-fremdanbieter.com",
+                "booking_entry_url": "https://unbekannt.de/", "booking_final_url": "https://booking.irgendein-fremdanbieter.com/x",
+                "detected_domains": [], "detected_iframes": [], "detected_scripts": [],
+                "detected_query_parameters": [],
+                "booking_buttons_found": ["jetzt buchen"], "booking_button_texts": ["jetzt buchen"],
+                "booking_button_hrefs": [""],
+                "booking_click_attempted": True, "booking_click_success": True,
+                "initial_url": "https://unbekannt.de/",
+                "popup_urls": ["https://booking.irgendein-fremdanbieter.com/x"],
+                "redirect_chain": [], "iframes_before_click": [], "iframes_after_click": [],
+                "network_domains": ["booking.irgendein-fremdanbieter.com"],
+                "detection_failure_reason": "",
+                "pms_anbieter": "Nicht eindeutig erkannt", "channelmanager_anbieter": "Nicht eindeutig erkannt",
+                "ist_fokus_mitbewerber": False,
+                "top_dirs21_potenzial": "PLUS", "top_dirs21_potenzial_fit": 55,
+                "kernpotenzial_score": 45, "competitive_gap": "Unbekannt",
+                "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
+                "neukunden_score": 50, "neukunden_prioritaet": "B",
+                "dirs21_koexistenz": "",
+            },
+        ]
+        at.run(timeout=60)
+        self.assertEqual(len(at.exception), 0, msg=f"Unerwartete Exceptions: {list(at.exception)}")
+        self.assertTrue(self._render_complete(at))
+
+        texts = " ".join(str(m.value) for m in at.markdown) + " ".join(str(c.value) for c in at.caption)
+        self.assertIn("unbekannte Booking Engine", texts)
+        self.assertIn("booking.irgendein-fremdanbieter.com", texts)
+
 
 if __name__ == "__main__":
     unittest.main()

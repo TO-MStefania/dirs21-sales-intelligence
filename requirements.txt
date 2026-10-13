@@ -5,3 +5,11 @@ pandas
 openpyxl
 python-dotenv
 PyYAML
+# Optionale Deep-Detection (Stufe 2-4 der Mitbewerber-/IBE-Erkennung, siehe
+# logic/booking_flow_detection.py) - rendert Websites und klickt Buchungs-
+# Einstiegspunkte, um JavaScript-basierte Booking Engines zu erkennen, die in
+# der rein statischen HTML-Analyse unsichtbar bleiben. Fehlt das Paket oder
+# der Browser (z.B. in einer schlanken Umgebung ohne "playwright install"),
+# wird die Deep-Detection automatisch übersprungen (siehe Moduldocstring) -
+# die restliche Analyse läuft unverändert weiter.
+playwright

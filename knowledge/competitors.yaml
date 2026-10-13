@@ -36,11 +36,37 @@
 #                           geraten (siehe Modul-Docstring
 #                           logic/competitor_comparison.py für die genaue
 #                           Herkunft jedes Werts).
-#   fingerprints         - Liste technischer Erkennungsregeln (siehe unten)
+#   fingerprints         - Liste technischer Erkennungsregeln für die STATISCHE
+#                           Stufe-1-Analyse (siehe unten)
+#   network_fingerprint  - zusätzliche technische Muster für die Stufe 2-4
+#                           Deep-Detection (Browser-Rendering, aktives Klicken
+#                           des Buchungseinstiegs, Popup-/Tab-/iFrame-/
+#                           Netzwerk-Beobachtung - siehe
+#                           logic/booking_flow_detection.py). Ein Anbieter
+#                           kann über verschiedene technische Ebenen erkannt
+#                           werden, unabhängig von der Hotel-eigenen
+#                           Domain (siehe Auftrag "Mitbewerber-/Booking-
+#                           Engine-Erkennung gezielt verbessern" Abschnitt 3/4
+#                           - z.B. Seekda unter einer kundeneigenen Domain, nur
+#                           über die skd-* Query-Parameter zuordenbar):
+#     booking_domains    - Domains, die im tatsächlichen Buchungslink/-ziel
+#                           auftreten (Redirect-Ziel, Klick-Ergebnis)
+#     iframe_domains     - Domains, die typischerweise als iframe-src der
+#                           Booking Engine eingebettet werden
+#     script_domains     - Domains, von denen Booking-Engine-JavaScript
+#                           geladen wird
+#     network_domains    - Domains, die im Netzwerkverkehr (XHR/fetch) des
+#                           aktiven Buchungsflows auftreten
+#     query_patterns     - charakteristische Query-Parameter (wie bei
+#                           fingerprints/query_params, aber zusätzlich für die
+#                           Stufe 4 Netzwerk-/Redirect-URL-Prüfung nutzbar)
+#     path_patterns       - charakteristische URL-Pfad-Bestandteile, die auch
+#                           OHNE erkennbare Anbieter-Domain eindeutig sind
+#                           (z.B. Viato "/cbe-relaunch/")
 #   pruefhinweise        - Hinweise zur Einordnung/Unsicherheiten
 #   quellen              - Herkunft der hinterlegten Informationen
 #
-# FINGERPRINT-REGEL-FELDER:
+# FINGERPRINT-REGEL-FELDER (fingerprints, Stufe 1 - unverändert):
 #   system         - ibe | pms | channel_manager (siehe Auftrag Abschnitt 5:
 #                    technisch ist über die öffentliche Website nur die
 #                    Booking Engine (IBE) direkt nachweisbar - für PMS und
@@ -83,6 +109,11 @@ providers:
       - {system: ibe, signal: keyword, pattern: "hotelnetsolutions", evidence_score: 60}
       - {system: ibe, signal: keyword, pattern: "hns", evidence_score: 20,
          hinweis: "'HNS' ist ein sehr generisches Kürzel - allein kein starker Nachweis."}
+    network_fingerprint:
+      booking_domains: ["onepagebooking.com"]
+      iframe_domains: ["onepagebooking.com"]
+      script_domains: ["onepagebooking.com"]
+      network_domains: ["onepagebooking.com"]
     pruefhinweise: "OnePageBooking ist das entscheidende Produktmerkmal; die reine Textnennung von 'HNS' allein reicht nicht."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -111,6 +142,11 @@ providers:
          hinweis: "Älterer/weiterer technischer SiteMinder-Hinweis (thebookingbutton.com)."}
       - {system: ibe, signal: domain, pattern: "book-directonline.com", evidence_score: 85}
       - {system: ibe, signal: keyword, pattern: "siteminder", evidence_score: 20}
+    network_fingerprint:
+      booking_domains: ["direct-book.com", "thebookingbutton.com", "book-directonline.com"]
+      iframe_domains: ["direct-book.com"]
+      script_domains: ["direct-book.com", "siteminder.com"]
+      network_domains: ["direct-book.com", "siteminder.com"]
     pruefhinweise: "Nur der Name 'SiteMinder' im sichtbaren Text oder Datenschutz allein ist kein technischer Nachweis (siehe Auftrag Abschnitt 11/41)."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -136,6 +172,10 @@ providers:
       - {system: ibe, signal: domain, pattern: "reservations.hotel-spider.com", evidence_score: 100,
          hinweis: "reservations.hotel-spider.com im Buchungslink/iframe gefunden."}
       - {system: ibe, signal: keyword, pattern: "hotel-spider", evidence_score: 20}
+    network_fingerprint:
+      booking_domains: ["reservations.hotel-spider.com"]
+      iframe_domains: ["reservations.hotel-spider.com"]
+      network_domains: ["hotel-spider.com"]
     pruefhinweise: ""
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -162,6 +202,11 @@ providers:
          hinweis: "app.mews.com im Buchungs-/Distributor-Kontext gefunden. Mews bietet grundsätzlich eine All-In-One-Plattform; der Einsatz des Mews PMS ist dadurch allein NICHT bestätigt."}
       - {system: ibe, signal: keyword, pattern: "mews", evidence_score: 20,
          hinweis: "'Mews' allein im Text ist generisch (Eigenname) - kein technischer Nachweis."}
+    network_fingerprint:
+      booking_domains: ["app.mews.com"]
+      iframe_domains: ["app.mews.com"]
+      script_domains: ["app.mews.com", "mews.li"]
+      network_domains: ["app.mews.com", "api.mews.com"]
     pruefhinweise: "NICHT automatisch PMS=Mews annehmen, nur weil die Booking Engine gefunden wurde (siehe Auftrag Abschnitt 5/6). Mews hat eine öffentlich bekannte DIRS21-Schnittstelle/Koexistenzmöglichkeit."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -189,8 +234,14 @@ providers:
       # Auftrag ("nicht auf /winzerstube hart codieren").
       - {system: ibe, signal: domain, pattern: "booking2.softtec.software", evidence_score: 100,
          hinweis: "booking2.softtec.software (Link/Redirect/iframe) gefunden - sehr starkes SoftTec-Merkmal."}
+      - {system: ibe, signal: domain, pattern: "ibe.hotels-online-buchen.de", evidence_score: 100,
+         hinweis: "ibe.hotels-online-buchen.de (Legacy-Domain, Link/Redirect/iframe) gefunden - ebenfalls SoftTec."}
       - {system: ibe, signal: keyword, pattern: "softtec", evidence_score: 20}
-    pruefhinweise: "SoftTec verfügt über eine DIRS21-Schnittstelle/Koexistenzmöglichkeit."
+    network_fingerprint:
+      booking_domains: ["booking2.softtec.software", "ibe.hotels-online-buchen.de"]
+      iframe_domains: ["booking2.softtec.software", "ibe.hotels-online-buchen.de"]
+      network_domains: ["softtec.software", "hotels-online-buchen.de"]
+    pruefhinweise: "SoftTec verfügt über eine DIRS21-Schnittstelle/Koexistenzmöglichkeit. 'ibe.hotels-online-buchen.de' ist eine ältere/weitere SoftTec-Domain (Legacy), gilt gleichwertig zu booking2.softtec.software."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
   easybooking:
@@ -219,6 +270,10 @@ providers:
       - {system: ibe, signal: keyword, pattern: "easy-booking.at", evidence_score: 60}
       - {system: ibe, signal: keyword, pattern: "easybooking", evidence_score: 40}
       - {system: ibe, signal: keyword, pattern: "zadego", evidence_score: 40}
+    network_fingerprint:
+      booking_domains: ["bookingmanager.easy-booking.at"]
+      iframe_domains: ["bookingmanager.easy-booking.at"]
+      network_domains: ["easy-booking.at"]
     pruefhinweise: ""
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -245,6 +300,10 @@ providers:
          hinweis: "booking.roomraccoon.com gefunden."}
       - {system: ibe, signal: keyword, pattern: "roomraccoon", evidence_score: 30,
          hinweis: "White-Label-/eigene Domain bei RoomRaccoon möglich - reine Textnennung ist schwächer als der Domain-Fund."}
+    network_fingerprint:
+      booking_domains: ["booking.roomraccoon.com"]
+      iframe_domains: ["booking.roomraccoon.com"]
+      network_domains: ["roomraccoon.com"]
     pruefhinweise: "Achtung White-Label-/eigene Domain möglich - Domain-Fingerprint daher nicht immer vorhanden, zusätzlich HTML/Scripts/Redirects prüfen (siehe Auftrag)."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -270,6 +329,10 @@ providers:
       - {system: ibe, signal: domain, pattern: "ibe.casablanca.at", evidence_score: 100}
       - {system: ibe, signal: domain, pattern: "bookingengine.casablanca.at", evidence_score: 100}
       - {system: ibe, signal: keyword, pattern: "casablanca hotelsoftware", evidence_score: 60}
+    network_fingerprint:
+      booking_domains: ["ibe.casablanca.at", "bookingengine.casablanca.at"]
+      iframe_domains: ["ibe.casablanca.at", "bookingengine.casablanca.at"]
+      network_domains: ["casablanca.at"]
     pruefhinweise: "CASABLANCA hat eine DIRS21-Schnittstelle/Koexistenzmöglichkeit."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -297,6 +360,10 @@ providers:
       - {system: ibe, signal: domain, pattern: "dbm.guestline.net", evidence_score: 85,
          hinweis: "Legacy Guestline DBM-Integration."}
       - {system: ibe, signal: keyword, pattern: "guestline", evidence_score: 20}
+    network_fingerprint:
+      booking_domains: ["booking.eu.guestline.app", "dbm.guestline.net"]
+      iframe_domains: ["booking.eu.guestline.app", "dbm.guestline.net"]
+      network_domains: ["guestline.app", "guestline.net"]
     pruefhinweise: "Guestline hat eine DIRS21-Schnittstelle/Koexistenzmöglichkeit."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -323,6 +390,11 @@ providers:
          hinweis: "booking.viatocrs.de gefunden - häufig per iframe eingebunden (/cbe-relaunch/)."}
       - {system: ibe, signal: domain, pattern: "/cbe-relaunch/", evidence_score: 90}
       - {system: ibe, signal: keyword, pattern: "viato", evidence_score: 20}
+    network_fingerprint:
+      booking_domains: ["booking.viatocrs.de"]
+      iframe_domains: ["booking.viatocrs.de"]
+      network_domains: ["viatocrs.de"]
+      path_patterns: ["/cbe-relaunch/"]
     pruefhinweise: "Viato ist häufig über iframe eingebunden - iframe-src explizit auf booking.viatocrs.de bzw. /cbe-relaunch/ prüfen."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -352,6 +424,9 @@ providers:
       - {system: ibe, signal: keyword, pattern: "cst", evidence_score: 20,
          hinweis: "'CST' allein ist sehr generisch - kein starker Nachweis."}
       - {system: ibe, signal: keyword, pattern: "vioma", evidence_score: 20}
+    network_fingerprint:
+      booking_domains: ["viomassl.com"]
+      network_domains: ["viomassl.com"]
     pruefhinweise: "DIRS21 und vioma können grundsätzlich koexistieren (interne Schnittstellen-/Partnerinformation)."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -378,6 +453,10 @@ providers:
          hinweis: "(Sub-)Domain von direct-reservation.net im Buchungsflow gefunden."}
       - {system: ibe, signal: keyword, pattern: "busyrooms", evidence_score: 40}
       - {system: ibe, signal: keyword, pattern: "busy rooms", evidence_score: 40}
+    network_fingerprint:
+      booking_domains: ["direct-reservation.net"]
+      iframe_domains: ["direct-reservation.net"]
+      network_domains: ["direct-reservation.net"]
     pruefhinweise: "BusyRooms bietet laut Knowledgebase nur ein Mini-PMS (status: partial)."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
 
@@ -412,5 +491,12 @@ providers:
          hinweis: "Mehrere eindeutige skd-* Booking-Parameter gefunden - gilt unabhängig von der Domain als starker Seekda-Nachweis."}
       - {system: ibe, signal: domain, pattern: "officialbookings.com", evidence_score: 80}
       - {system: ibe, signal: keyword, pattern: "seekda", evidence_score: 20}
-    pruefhinweise: "Domain allein ist bei Seekda KEIN verlässliches Merkmal (kundeneigene Booking-Subdomain möglich) - die skd-* Parameter sind der entscheidende Nachweis."
+    network_fingerprint:
+      booking_domains: ["officialbookings.com"]
+      network_domains: ["officialbookings.com", "seekda.com"]
+      query_patterns: [
+        "skd-property-code", "skd-checkin", "skd-checkout", "skd-total-rooms",
+        "skd-language-code", "skd-currency-code", "skd-price-type",
+      ]
+    pruefhinweise: "Domain allein ist bei Seekda KEIN verlässliches Merkmal (kundeneigene Booking-Subdomain möglich) - die skd-* Parameter sind der entscheidende Nachweis, auch im Redirect-Ziel/Netzwerkverkehr nach einem Booking-Klick."
     quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"

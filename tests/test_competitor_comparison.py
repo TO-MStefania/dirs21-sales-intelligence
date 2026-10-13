@@ -35,7 +35,10 @@ def _row_mit_fits(**fits) -> dict:
 
 
 def _detect(html: str) -> dict:
-    return detect_competitor({"https://hotel.de/": html})
+    # Deep-Detection (Stufe 2-4) bewusst deaktiviert - dieser Test prüft die
+    # Competitive-Gap-Logik anhand eines bereits technisch eindeutigen
+    # Stufe-1-Treffers (SITEMINDER_HTML), nicht die Browseranalyse selbst.
+    return detect_competitor({"https://hotel.de/": html}, use_playwright_fallback=False)
 
 
 SITEMINDER_HTML = '<a href="https://direct-book.com/de/x">Online buchen</a>'

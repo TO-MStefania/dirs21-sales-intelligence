@@ -78,6 +78,13 @@ class TestPipelineZimmeranzahlImmerVorhanden(unittest.TestCase):
     def setUp(self):
         with open("config.yaml", "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
+        # Deep-Detection (Stufe 2-4, siehe logic/booking_flow_detection.py)
+        # bewusst deaktiviert - dieser Test prüft die Zimmeranzahl-Ermittlung
+        # anhand gefakter Crawl-Daten unter einer nicht wirklich
+        # kontrollierten Domain ("test.de"); ein echter Browseraufruf wäre
+        # netzwerkabhängig und nicht aussagekräftig.
+        self.config.setdefault("analysis", {})
+        self.config["analysis"]["enable_deep_booking_detection"] = False
         self._original_crawl_website = pipeline.crawl_website
 
     def tearDown(self):
