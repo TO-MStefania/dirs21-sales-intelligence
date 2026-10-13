@@ -50,6 +50,16 @@ DETAIL_COLUMNS_NEUKUNDEN = [
     "booking_type", "competitor_detection_status",
     "booking_entry_url", "booking_final_url",
     "detected_domains", "detected_iframes", "detected_scripts", "detected_query_parameters",
+    # Differenzierterer provider_status + unbekannte Booking Engines sowie
+    # Deep-Detection-Rohdaten (Stufe 2-4, siehe Auftrag "Mitbewerber-/
+    # Booking-Engine-Erkennung gezielt verbessern" Abschnitt 10/11) - NUR für
+    # den Debug-Bereich der Webapp-Detailansicht.
+    "provider_status", "unknown_booking_domain",
+    "booking_buttons_found", "booking_button_texts", "booking_button_hrefs",
+    "booking_click_attempted", "booking_click_success",
+    "initial_url", "popup_urls", "redirect_chain",
+    "iframes_before_click", "iframes_after_click", "scripts_detected", "network_domains",
+    "detection_failure_reason",
 ]
 
 APP_COLUMNS_NEUKUNDEN = RESULT_COLUMNS_NEUKUNDEN + DETAIL_COLUMNS_NEUKUNDEN
@@ -94,9 +104,27 @@ def analyze_neukunde(company: dict, config: dict, progress_callback=None) -> dic
         )
 
     # Mitbewerber-Erkennung (siehe Auftrag Abschnitt 18) - verwendet
-    # ausschließlich bereits gecrawlte Seiten, kein erneuter Request.
+    # ausschließlich bereits gecrawlte Seiten für Stufe 1 (kein erneuter
+    # Request). Stufe 2-4 (Deep-Detection, siehe
+    # logic/booking_flow_detection.py) rendert die Website bei Bedarf
+    # zusätzlich mit Chromium/Playwright - nur wenn Stufe 1 keinen
+    # eindeutigen Treffer liefert und per Konfiguration aktiviert ist (siehe
+    # config.yaml analysis.enable_deep_booking_detection).
+    analysis_cfg = config.get("analysis", {})
+    use_deep_detection = analysis_cfg.get("enable_deep_booking_detection", True)
+    deep_detection_timeouts = {
+        "nav_timeout_ms": analysis_cfg.get("deep_detection_nav_timeout_ms", 12000),
+        "click_timeout_ms": analysis_cfg.get("deep_detection_click_timeout_ms", 3000),
+        "settle_timeout_ms": analysis_cfg.get("deep_detection_settle_timeout_ms", 4000),
+    }
     try:
-        detection = detect_competitor(signals.get("crawl_pages") or {})
+        detection = detect_competitor(
+            signals.get("crawl_pages") or {},
+            use_playwright_fallback=use_deep_detection,
+            website=signals.get("website", ""),
+            progress_callback=progress_callback,
+            deep_detection_timeouts=deep_detection_timeouts,
+        )
     except Exception as exc:
         from logic.competitor_detection import EMPTY_DETECTION
         detection = dict(EMPTY_DETECTION)
@@ -119,6 +147,21 @@ def analyze_neukunde(company: dict, config: dict, progress_callback=None) -> dic
     row["detected_iframes"] = detection.get("detected_iframes", [])
     row["detected_scripts"] = detection.get("detected_scripts", [])
     row["detected_query_parameters"] = detection.get("detected_query_parameters", [])
+    row["provider_status"] = detection.get("provider_status", "")
+    row["unknown_booking_domain"] = detection.get("unknown_booking_domain", "")
+    row["booking_buttons_found"] = detection.get("booking_buttons_found", [])
+    row["booking_button_texts"] = detection.get("booking_button_texts", [])
+    row["booking_button_hrefs"] = detection.get("booking_button_hrefs", [])
+    row["booking_click_attempted"] = detection.get("booking_click_attempted", False)
+    row["booking_click_success"] = detection.get("booking_click_success", False)
+    row["initial_url"] = detection.get("initial_url", "")
+    row["popup_urls"] = detection.get("popup_urls", [])
+    row["redirect_chain"] = detection.get("redirect_chain", [])
+    row["iframes_before_click"] = detection.get("iframes_before_click", [])
+    row["iframes_after_click"] = detection.get("iframes_after_click", [])
+    row["scripts_detected"] = detection.get("scripts_detected", [])
+    row["network_domains"] = detection.get("network_domains", [])
+    row["detection_failure_reason"] = detection.get("detection_failure_reason", "")
     if detection.get("pruefhinweis_mitbewerber"):
         pruefhinweise.append(detection["pruefhinweis_mitbewerber"])
 

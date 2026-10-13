@@ -261,8 +261,19 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
     # Verwendet dieselben bereits gecrawlten Seiten (crawl_pages) wie die
     # DIRS21-Erkennung weiter oben - löst keine zusätzlichen Web-Requests aus.
     _report(progress_callback, "Mitbewerber wird geprüft")
+    deep_detection_timeouts = {
+        "nav_timeout_ms": analysis_cfg.get("deep_detection_nav_timeout_ms", 12000),
+        "click_timeout_ms": analysis_cfg.get("deep_detection_click_timeout_ms", 3000),
+        "settle_timeout_ms": analysis_cfg.get("deep_detection_settle_timeout_ms", 4000),
+    }
     try:
-        competitor_detection = detect_competitor(crawl_pages or {})
+        competitor_detection = detect_competitor(
+            crawl_pages or {},
+            use_playwright_fallback=analysis_cfg.get("enable_deep_booking_detection", True),
+            website=website,
+            progress_callback=progress_callback,
+            deep_detection_timeouts=deep_detection_timeouts,
+        )
     except Exception as exc:
         competitor_detection = dict(EMPTY_COMPETITOR_DETECTION)
         pruefhinweise.append(f"Mitbewerber-Erkennung fehlgeschlagen: {exc}")

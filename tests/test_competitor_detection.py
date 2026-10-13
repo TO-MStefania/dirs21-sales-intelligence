@@ -9,7 +9,21 @@ Ausführen:
 
 import unittest
 
-from logic.competitor_detection import detect_competitor, load_knowledgebase
+from logic.competitor_detection import detect_competitor as _detect_competitor
+from logic.competitor_detection import load_knowledgebase
+
+
+def detect_competitor(pages, **kwargs):
+    """Test-Wrapper: deaktiviert die Deep-Detection (Stufe 2-4, siehe
+    logic/booking_flow_detection.py) standardmäßig, da diese Tests gezielt
+    die rein statische Stufe-1-Analyse mit frei erfundenen, nicht
+    erreichbaren Test-Domains prüfen - ein echter Browseraufruf gegen diese
+    Domains wäre langsam, netzwerkabhängig und nicht aussagekräftig. Die
+    Deep-Detection selbst wird separat in
+    tests/test_booking_flow_detection.py getestet (mit echtem Playwright
+    gegen einen lokalen Test-Server)."""
+    kwargs.setdefault("use_playwright_fallback", False)
+    return _detect_competitor(pages, **kwargs)
 
 
 def _pages(html: str, url: str = "https://hotel-beispiel.de/") -> dict:

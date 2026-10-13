@@ -12,11 +12,20 @@ Ausführen:
 
 import unittest
 
-from logic.competitor_detection import (
-    detect_competitor,
-    playwright_fallback_pages,
-    resolve_booking_redirect,
-)
+from logic.booking_flow_detection import analyze_booking_flow, is_playwright_available
+from logic.competitor_detection import detect_competitor as _detect_competitor
+from logic.competitor_detection import resolve_booking_redirect
+
+
+def detect_competitor(pages, **kwargs):
+    """Test-Wrapper: deaktiviert die Deep-Detection (Stufe 2-4) standardmäßig
+    - diese Tests prüfen gezielt die statische Stufe-1-Logik mit frei
+    erfundenen, nicht erreichbaren Test-Domains (siehe
+    tests/test_competitor_detection.py für dieselbe Begründung). Ein Test
+    aktiviert die Deep-Detection bewusst explizit, um zu zeigen, dass ein
+    Fehlschlag (nicht erreichbare Domain) nie abstürzt."""
+    kwargs.setdefault("use_playwright_fallback", False)
+    return _detect_competitor(pages, **kwargs)
 
 
 def _pages(html: str, url: str = "https://hotel-beispiel.de/") -> dict:
@@ -147,16 +156,24 @@ class TestRedirectUndPlaywrightFallbackOptional(unittest.TestCase):
             "",
         )
 
-    def test_playwright_fallback_crasht_nie_und_liefert_dict(self):
-        result = playwright_fallback_pages("https://diese-domain-existiert-ganz-sicher-nicht.invalid/x", timeout_ms=500)
+    def test_analyze_booking_flow_crasht_nie_und_liefert_dict_bei_unerreichbarer_domain(self):
+        result = analyze_booking_flow(
+            "https://diese-domain-existiert-ganz-sicher-nicht.invalid/x", nav_timeout_ms=3000, use_cache=False,
+        )
         self.assertIsInstance(result, dict)
+        self.assertTrue(result["detection_failure_reason"])
 
     def test_use_playwright_fallback_flag_aendert_ergebnis_nicht_bei_fehler(self):
         result = detect_competitor(
-            _pages("<html><body>Keine Buchung hier.</body></html>"),
+            _pages("<html><body>Keine Buchung hier.</body></html>", url="https://hotel-beispiel-unreachable.invalid/"),
             use_playwright_fallback=True,
         )
         self.assertEqual(result["mitbewerber_ibe"], "Nicht eindeutig erkannt")
+        self.assertIn(result["provider_status"], ("technical_failure", "no_booking_detected", "unclear"))
+
+    @unittest.skipUnless(is_playwright_available(), "Playwright nicht installiert")
+    def test_is_playwright_available_meldet_installation_korrekt(self):
+        self.assertTrue(is_playwright_available())
 
 
 class TestJsButtonsOhneHref(unittest.TestCase):

@@ -13,20 +13,51 @@ OTA-Domains (booking.com & Co.) für die Booking-Type-Klassifikation - das
 sind keine Mitbewerber/IBE-Anbieter aus der Knowledgebase, sondern eine rein
 strukturelle Unterscheidung "externe OTA" vs. "eigene Booking Engine".
 
-BOOKING-TYPE-KLASSIFIKATION (siehe Auftrag "Mitbewerber-/IBE-Erkennung
-überarbeiten", Abschnitt 1/6): bevor überhaupt ein IBE-Anbieter benannt wird,
-wird zuerst eingeordnet, WAS auf der Website technisch vorhanden ist -
-online_booking (echte Booking Engine), booking_request (reines
-Anfrageformular, KEINE IBE), external_ota_only (nur Verweis auf Booking.com
-& Co.), no_booking_detected oder unclear. Ein reines Anfrageformular ist
-AUSDRÜCKLICH KEINE Booking Engine.
+VIERSTUFIGE DETECTION-PIPELINE (siehe Auftrag "Mitbewerber-/Booking-Engine-
+Erkennung gezielt verbessern"): die rein statische Analyse (Stufe 1, dieses
+Modul) analysiert NUR das vom Server ausgelieferte HTML - kein JavaScript,
+keine Popups/neuen Tabs, keine dynamisch erzeugten iFrames, keine
+Netzwerkrequests. Viele reale Booking Engines sind aber erst nach
+JavaScript-Ausführung bzw. nach einem Klick auf den Buchungs-Button
+nachweisbar. Deshalb gibt es als FALLBACK (nur wenn Stufe 1 kein eindeutiges
+Ergebnis liefert, siehe `use_playwright_fallback`) drei weitere Stufen über
+logic/booking_flow_detection.py:
+  Stufe 2: die Seite wird vollständig mit Chromium/Playwright gerendert und
+           erneut statisch analysiert (JS-generiertes HTML wird sichtbar).
+  Stufe 3: der Buchungs-Einstiegspunkt (Button/Link) wird tatsächlich
+           geklickt (NIE ein Buchungsabschluss) - beobachtet werden
+           Navigation, neue Tabs/Popups und neu entstehende iFrames.
+  Stufe 4: der Netzwerkverkehr (XHR/fetch/document/iframe/script) während
+           und nach dem Klick wird beobachtet und gegen die Knowledgebase
+           geprüft.
+Jede Stufe läuft nur, wenn die vorherige kein eindeutiges Ergebnis liefert.
 
-EVIDENZ-HIERARCHIE (siehe Auftrag Abschnitt 2/4): pro Fingerprint-Fund wird
-eine Evidenzstufe vergeben, abgeleitet aus Signal-Typ (domain/query_params
-vs. keyword) UND Fundort:
-  A) Aktive Booking-Evidenz    - Domain/Query-Parameter im tatsächlichen,
-                                  aktuellen Buchungsflow (Link/iFrame/Script-
-                                  src/Formular-Action/JS-Button) -> sehr stark.
+BOOKING-TYPE-KLASSIFIKATION (siehe Auftrag Abschnitt 1/6): bevor überhaupt
+ein IBE-Anbieter benannt wird, wird zuerst eingeordnet, WAS auf der Website
+technisch vorhanden ist - online_booking (echte Booking Engine),
+booking_request (reines Anfrageformular, KEINE IBE), external_ota_only (nur
+Verweis auf Booking.com & Co.), no_booking_detected oder unclear. Ein reines
+Anfrageformular ist AUSDRÜCKLICH KEINE Booking Engine.
+
+PROVIDER_STATUS (siehe Auftrag Abschnitt 10): differenzierter als nur
+"erkannt"/"nicht erkannt" - confirmed_provider (KB-Anbieter technisch
+bestätigt), unknown_booking_engine (eine echte externe Booking Engine wurde
+nachgewiesen, aber keiner KB-Anbieter konnte zugeordnet werden -
+`unknown_booking_domain` wird gespeichert, damit die Knowledgebase gezielt
+erweitert werden kann), booking_request, external_ota_only,
+no_booking_detected, technical_failure (Deep-Detection konnte technisch gar
+nicht durchgeführt werden, z.B. Browser/Playwright fehlt oder Seite
+unerreichbar) und unclear.
+
+EVIDENZ-HIERARCHIE (siehe Auftrag Abschnitt 2/4/14): pro Fingerprint-Fund
+wird eine Evidenzstufe vergeben:
+  A) Aktive Booking-Evidenz    - Domain/Pfad/Query-Parameter im tatsächlichen
+                                  Buchungsflow (Link/iFrame/Script-src/
+                                  Formular-Action/JS-Button, ODER im
+                                  Redirect-Ziel/Popup/neuen Tab/Netzwerk-
+                                  verkehr nach einem aktiven Klick) -> sehr
+                                  stark, einzige Stufe, die "confirmed"/
+                                  "hoch" allein auslösen darf.
   B) Technische Zusatzevidenz  - generisches Keyword im technischen Kontext
                                   oder in eingebettetem Script/JS-Konfig
                                   gefunden -> unterstützend, für sich allein
@@ -38,7 +69,10 @@ vs. keyword) UND Fundort:
                                   Referenz, Partnerliste) -> NIE ausreichend
                                   für eine aktive Nutzung.
 Der aktuelle Buchungsfluss hat IMMER Vorrang vor alten/rechtlichen/textuellen
-Erwähnungen (siehe Auftrag Abschnitt 7).
+Erwähnungen (siehe Auftrag Abschnitt 7). Mehrere eigenständige technische
+Hinweise (Tier A/B) auf denselben Anbieter können zusammen "mittel" ergeben,
+auch wenn kein Einzelfund allein ausreicht - reine Text-/Rechtshinweise
+werden dafür NIE summiert.
 
 PMS UND CHANNELMANAGER (siehe Auftrag Abschnitt 5): Über die öffentliche
 Website ist technisch zuverlässig NUR die eingebettete/verlinkte Booking
@@ -48,22 +82,21 @@ führt deshalb NICHT automatisch zu "PMS erkannt" oder "Channelmanager
 erkannt" - diese Felder bleiben in dieser Version bewusst immer "Nicht
 eindeutig erkannt", bis ein belastbares technisches Merkmal dafür existiert.
 
-ERKENNUNGSSICHERHEIT / STATUS (siehe Auftrag Abschnitt 3/13): 80-100 "hoch"
-(= competitor_detection_status "confirmed"), 50-79 "mittel" (= "possible",
-kann trotzdem als konkreter Name ausgegeben werden, wenn gut dokumentiert),
-darunter "nicht eindeutig" (= NIEDRIG, NIE ein konkreter Anbietername - siehe
-NICHT_ERKANNT). Mehrere eigenständige technische Hinweise (Tier A/B) auf
-denselben Anbieter können zusammen "mittel" ergeben, auch wenn kein
-Einzelfund für sich allein ausreicht - reine Text-/Rechtshinweise werden
-dafür NIE summiert (kein "Aufsummieren schwacher Hinweise zu einem starken
-Ergebnis").
+KEINE SCORING-ÄNDERUNGEN (siehe Auftrag Abschnitt 21): dieses Modul liefert
+ausschließlich technische Erkennungsfelder - Neukunden-/Bestandskunden-Score,
+alle Produkt-Fit-Scores, Competitive-Gap-Regeln und die Fokus-Mitbewerber-
+Gewichtung (logic/scoring_neukunden.py, logic/competitor_comparison.py)
+lesen diese Felder nur, werden hier aber an keiner Stelle verändert.
 """
 
 import functools
 import re
+from urllib.parse import urlparse
 
 import yaml
 from bs4 import BeautifulSoup
+
+from logic.booking_flow_detection import analyze_booking_flow
 
 DEFAULT_KNOWLEDGEBASE_PATH = "knowledge/competitors.yaml"
 
@@ -71,6 +104,7 @@ HOCH_SCHWELLE = 80
 MITTEL_SCHWELLE = 50
 
 NICHT_ERKANNT = "Nicht eindeutig erkannt"
+UNBEKANNTE_IBE = "Unbekannte IBE"
 
 FORMER_PROVIDER_HINTS = [
     "früher", "frueher", "ehemals", "vormals", "vorheriger anbieter",
@@ -117,6 +151,18 @@ NON_ROOM_LINK_CONTEXTS = {
 # JavaScript-Buchungsbuttons ohne normalen href (siehe Auftrag Abschnitt 9).
 JS_ATTR_CANDIDATES = ["onclick", "data-url", "data-href", "data-booking-url", "data-booking", "data-target"]
 
+# Deep-Detection-Fehlermeldungen (siehe logic/booking_flow_detection.py), die
+# bedeuten, dass die Browseranalyse gar nicht erst durchgeführt werden
+# konnte (Playwright/Browser fehlt, Seite unerreichbar, Absturz) - im
+# Unterschied zu einem vollständig durchgeführten, aber ergebnislosen
+# Versuch (das bleibt regulär "unclear"/"no_booking_detected").
+TECHNICAL_FAILURE_PREFIXES = (
+    "Playwright nicht installiert",
+    "Browser konnte nicht gestartet werden",
+    "Seite konnte nicht geladen werden",
+    "Technischer Fehler bei der Browseranalyse",
+)
+
 EMPTY_DETECTION = {
     "mitbewerber_ibe": NICHT_ERKANNT,
     "mitbewerber_ibe_sicherheit": "",
@@ -132,7 +178,8 @@ EMPTY_DETECTION = {
     "dirs21_koexistenz": "",
     "pruefhinweis_mitbewerber": "",
     "_provider_key": None,
-    # Neue Felder (siehe Auftrag "Mitbewerber-/IBE-Erkennung überarbeiten"):
+    # Booking-Type/Status/Evidenz (siehe Auftrag "Mitbewerber-/IBE-Erkennung
+    # überarbeiten"):
     "booking_type": "no_booking_detected",
     "competitor_detection_status": "not_detected",
     "booking_entry_url": "",
@@ -141,6 +188,32 @@ EMPTY_DETECTION = {
     "detected_iframes": [],
     "detected_scripts": [],
     "detected_query_parameters": [],
+    # Differenziertere Statuslogik + unbekannte Booking Engines (siehe
+    # Auftrag "Mitbewerber-/Booking-Engine-Erkennung gezielt verbessern"
+    # Abschnitt 10):
+    "provider_status": "no_booking_detected",
+    "unknown_booking_domain": "",
+    # Debug-Rohdaten der Deep-Detection (Stufe 2-4, siehe Auftrag Abschnitt
+    # 11/12) - leer, solange Stufe 1 bereits ausreichte.
+    "booking_buttons_found": [],
+    "booking_button_texts": [],
+    "booking_button_hrefs": [],
+    "booking_click_attempted": False,
+    "booking_click_success": False,
+    "initial_url": "",
+    "popup_urls": [],
+    "redirect_chain": [],
+    "iframes_before_click": [],
+    "iframes_after_click": [],
+    "scripts_detected": [],
+    "network_domains": [],
+    "detection_failure_reason": "",
+    # Aliase mit der im Auftrag Abschnitt 11 genannten Benennung - dieselben
+    # Werte wie die etablierten mitbewerber_*-Felder, nur unter dem dort
+    # verwendeten Namen für die Debug-Ansicht.
+    "competitor": NICHT_ERKANNT,
+    "competitor_confidence": "",
+    "competitor_evidence": "",
 }
 
 
@@ -381,6 +454,133 @@ def _best_match_for_system(system: str, providers: dict, pages_data: dict, page_
     return best
 
 
+# ---------------------------------------------------------------------------
+# Stufe 3/4: Domain-/Pfad-/Query-Abgleich gegen Redirect-Ziel, Popups, neue
+# iFrames und Netzwerkverkehr NACH einem aktiv ausgelösten Booking-Klick
+# (siehe knowledge/competitors.yaml "network_fingerprint" sowie Auftrag
+# "Network Fingerprinting"). Ein Anbieter kann so unabhängig von der
+# Hotel-eigenen Domain erkannt werden (siehe Auftrag Abschnitt 4, Beispiel
+# Seekda unter kundeneigener Domain).
+# ---------------------------------------------------------------------------
+
+def _provider_domains(provider: dict) -> set:
+    domains = {
+        str(rule["pattern"]).lower()
+        for rule in provider.get("fingerprints", [])
+        if rule.get("signal") == "domain" and rule.get("pattern")
+    }
+    nf = provider.get("network_fingerprint") or {}
+    for key in ("booking_domains", "iframe_domains", "script_domains", "network_domains"):
+        domains.update(str(d).lower() for d in (nf.get(key) or []) if d)
+    return domains
+
+
+def _provider_path_patterns(provider: dict) -> set:
+    nf = provider.get("network_fingerprint") or {}
+    return {str(p).lower() for p in (nf.get("path_patterns") or []) if p}
+
+
+def _provider_query_patterns(provider: dict) -> set:
+    patterns = set()
+    for rule in provider.get("fingerprints", []):
+        if rule.get("signal") == "query_params":
+            patterns.update(str(p).lower() for p in (rule.get("pattern") or []))
+    nf = provider.get("network_fingerprint") or {}
+    patterns.update(str(p).lower() for p in (nf.get("query_patterns") or []))
+    return patterns
+
+
+def _match_provider_against_strings(provider: dict, haystacks: list, joined: str):
+    for domain in _provider_domains(provider):
+        if any(domain in h for h in haystacks):
+            return 100, (
+                f"'{domain}' im Redirect-Ziel/Popup/neuem Tab/iFrame/Netzwerkverkehr des "
+                "aktiv ausgelösten Buchungsflows gefunden"
+            ), domain
+    for path in _provider_path_patterns(provider):
+        if any(path in h for h in haystacks):
+            return 90, f"'{path}' im Redirect-Ziel/Popup/iFrame-Pfad des aktiven Buchungsflows gefunden", path
+    query_patterns = _provider_query_patterns(provider)
+    if query_patterns:
+        matched = sorted({p for p in query_patterns if f"{p}=" in joined})
+        if len(matched) >= 2:
+            return (
+                95,
+                "Mehrere eindeutige Booking-Parameter im Redirect-Ziel/Netzwerkverkehr gefunden: " + ", ".join(matched),
+                ", ".join(matched),
+            )
+    return 0, "", ""
+
+
+def _match_strings_against_providers(strings: list, providers: dict) -> dict:
+    best = {"score": 0, "tier": "", "provider_key": None, "quelle": "", "evidenz": ""}
+    haystacks = [s.lower() for s in strings if s]
+    if not haystacks:
+        return best
+    joined = " ".join(haystacks)
+    for provider_key, provider in providers.items():
+        score, quelle, evidenz = _match_provider_against_strings(provider, haystacks, joined)
+        if score > best["score"]:
+            best = {"score": score, "tier": "A" if score else "", "provider_key": provider_key, "quelle": quelle, "evidenz": evidenz}
+    return best
+
+
+def _netloc(value: str) -> str:
+    try:
+        if value and "//" not in value:
+            value = "https://" + value
+        return (urlparse(value).netloc or "").lower()
+    except Exception:
+        return ""
+
+
+def _is_external_non_ota_domain(netloc: str, homepage_netloc: str) -> bool:
+    if not netloc:
+        return False
+    if homepage_netloc and (netloc == homepage_netloc or netloc.endswith("." + homepage_netloc)):
+        return False
+    if any(ota in netloc for ota in OTA_DOMAINS):
+        return False
+    return True
+
+
+def _external_unmatched_booking_domain(pages_data: dict, homepage_netloc: str) -> str:
+    """Stufe 1 (statisch): ein Zimmer-Buchungslink, der zu einer fremden,
+    nicht-OTA-Domain führt, die in KEINEM KB-Fingerprint auftaucht, ist
+    bereits selbst ein starkes strukturelles Indiz für eine (unbekannte)
+    externe Booking Engine (siehe Auftrag Abschnitt 10/18) - wird nur
+    aufgerufen, wenn zuvor KEIN Tier-A-KB-Treffer vorliegt."""
+    for data in pages_data.values():
+        for href in data["room_links"]:
+            if not href.startswith("http"):
+                continue
+            netloc = _netloc(href)
+            if _is_external_non_ota_domain(netloc, homepage_netloc):
+                return netloc
+    return ""
+
+
+def _external_domain_from_flow(flow: dict, homepage_netloc: str) -> str:
+    """Stufe 3/4: nach einem erfolgreichen Booking-Klick zu einer fremden,
+    nicht-OTA-Domain navigiert/ein Popup geöffnet/ein neues iFrame
+    nachgeladen -> starkes Indiz für eine (unbekannte) externe Booking
+    Engine, auch ohne KB-Treffer."""
+    candidates = []
+    if flow.get("final_url"):
+        candidates.append(flow["final_url"])
+    candidates.extend(flow.get("popup_urls", []))
+    candidates.extend(flow.get("iframes_after_click", []))
+    for value in candidates:
+        netloc = _netloc(value)
+        if _is_external_non_ota_domain(netloc, homepage_netloc):
+            return netloc
+    return ""
+
+
+def _is_technical_failure_reason(reason: str) -> bool:
+    return bool(reason) and reason.startswith(TECHNICAL_FAILURE_PREFIXES)
+
+
 def _classify_booking_type(pages_data: dict, best_ibe: dict) -> str:
     """Booking-Type-Klassifikation (siehe Auftrag Abschnitt 1/6) - IMMER vor
     der Anbieternennung geprüft. Ein reines Anfrageformular ist ausdrücklich
@@ -440,12 +640,9 @@ def _collect_query_parameters(pages_data: dict):
 
 
 def _collect_detected_domains(pages_data: dict, providers: dict):
-    domain_patterns = {
-        str(rule.get("pattern", "")).lower()
-        for provider in providers.values()
-        for rule in provider.get("fingerprints", [])
-        if rule.get("signal") == "domain" and rule.get("pattern")
-    }
+    domain_patterns = set()
+    for provider in providers.values():
+        domain_patterns.update(_provider_domains(provider))
     found = set()
     for data in pages_data.values():
         haystacks = data["technical_room"] + [data["script_text"]]
@@ -457,11 +654,12 @@ def _collect_detected_domains(pages_data: dict, providers: dict):
 
 def resolve_booking_redirect(url: str, timeout: int = 6) -> str:
     """Folgt HTTP-Redirects eines Buchungslinks und liefert die finale URL
-    (siehe Auftrag Abschnitt 8, z.B. hotel.de/buchen -> direct-book.com).
-    Wird NUR aufgerufen, wenn follow_redirects explizit aktiviert ist, um
-    während einer normalen Analyse keine zusätzlichen, ungewollten Live-
-    Requests auszulösen. Liefert bei jedem Fehler einen leeren String statt
-    abzustürzen."""
+    (siehe Auftrag Abschnitt 8, z.B. hotel.de/buchen -> direct-book.com) -
+    ohne Browser, rein über requests. Wird NUR aufgerufen, wenn
+    follow_redirects explizit aktiviert ist. Liefert bei jedem Fehler einen
+    leeren String statt abzustürzen. Ergänzt (nicht ersetzt) die deutlich
+    umfassendere Deep-Detection (siehe logic/booking_flow_detection.py), die
+    auch JavaScript-Navigation/Popups/neue Tabs abdeckt."""
     try:
         import requests
         response = requests.get(url, allow_redirects=True, timeout=timeout, stream=True)
@@ -483,59 +681,66 @@ def _booking_urls(pages_data: dict, follow_redirects: bool):
     return entry_url, final_url
 
 
-def playwright_fallback_pages(url: str, timeout_ms: int = 8000) -> dict:
-    """Optionaler zweiter Erkennungsschritt (siehe Auftrag Abschnitt 10):
-    rendert die Seite mit dem vorinstallierten Chromium/Playwright und
-    liefert zusätzliche gerenderte Seiten, falls die statische Analyse kein
-    klares Ergebnis liefert. Behandelt Cookie-Banner nur neutral (best
-    effort), führt NIEMALS eine tatsächliche Buchung durch, und liefert bei
-    fehlendem Playwright oder jedem Fehler einfach ein leeres Ergebnis -
-    nie einen Absturz. Wird vom Aufrufer nur selektiv genutzt (nicht für
-    jede Website, siehe Auftrag Abschnitt 10)."""
+def _report_progress(progress_callback, step: str) -> None:
+    if not progress_callback:
+        return
     try:
-        from playwright.sync_api import sync_playwright
+        progress_callback(step)
     except Exception:
-        return {}
+        pass  # Fortschrittsanzeige ist rein informativ - darf die Analyse nie stören.
 
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            try:
-                page = browser.new_page()
-                page.goto(url, timeout=timeout_ms)
-                for text in ("Akzeptieren", "Alle akzeptieren", "Accept", "Accept all", "OK", "Einverstanden"):
-                    try:
-                        locator = page.get_by_text(text, exact=False)
-                        if locator.count() > 0:
-                            locator.first.click(timeout=1000)
-                            break
-                    except Exception:
-                        continue
-                html = page.content()
-            finally:
-                browser.close()
-        return {url: html}
-    except Exception:
-        return {}
+
+def _derive_provider_status(booking_type, tier, provider_key, unknown_domain, technical_failure) -> str:
+    if technical_failure and booking_type in ("unclear", "no_booking_detected") and not provider_key and not unknown_domain:
+        return "technical_failure"
+    if booking_type == "booking_request" and tier != "A":
+        return "booking_request"
+    if booking_type == "external_ota_only":
+        return "external_ota_only"
+    if booking_type == "online_booking":
+        if provider_key:
+            return "confirmed_provider"
+        if unknown_domain:
+            return "unknown_booking_engine"
+        return "unclear"
+    if booking_type == "no_booking_detected":
+        return "no_booking_detected"
+    return "unclear"
 
 
 def detect_competitor(
     pages: dict,
     knowledgebase_path: str = DEFAULT_KNOWLEDGEBASE_PATH,
     follow_redirects: bool = False,
-    use_playwright_fallback: bool = False,
+    use_playwright_fallback: bool = True,
+    website: str = "",
+    progress_callback=None,
+    deep_detection_timeouts: dict = None,
 ) -> dict:
     """Technische Mitbewerber-/IBE-Erkennung (siehe Moduldocstring).
 
-    pages: {url: html} bereits gecrawlter Seiten.
+    pages: {url: html} bereits gecrawlter Seiten (Stufe 1, Startseite zuerst).
+    website: optionale Haupt-Domain des Unternehmens (für die "eigene vs.
+        fremde Domain"-Unterscheidung bei unbekannten Booking Engines) - wird,
+        falls leer, aus der ersten pages-URL abgeleitet.
     follow_redirects: wenn True, wird dem ersten gefundenen Buchungslink per
-        echtem HTTP-Request gefolgt, um die finale Redirect-Ziel-Domain zu
-        prüfen (siehe Auftrag Abschnitt 8). Standardmäßig AUS, damit die
-        normale Analyse keine zusätzlichen Live-Requests auslöst.
-    use_playwright_fallback: wenn True UND die statische Analyse kein klares
-        Ergebnis liefert, wird optional einmalig Playwright als zweiter
-        Erkennungsschritt versucht (siehe Auftrag Abschnitt 10). Standard-
-        mäßig AUS.
+        einfachem HTTP-Request gefolgt (siehe Auftrag Abschnitt 8, ohne
+        Browser). Standardmäßig AUS.
+    use_playwright_fallback: wenn True UND die statische Stufe-1-Analyse
+        keinen Tier-A-Treffer liefert, wird die Deep-Detection (Stufe 2-4,
+        siehe logic/booking_flow_detection.py) versucht - rendert die Seite,
+        klickt den Buchungs-Einstiegspunkt und beobachtet Navigation/Popups/
+        neue Tabs/iFrames/Netzwerkverkehr. Läuft NIE für eine bereits
+        eindeutig bestätigte Website (Performance, siehe Auftrag Abschnitt
+        15/20). Standardmäßig AN - fehlt Playwright/der Browser, wird dies
+        automatisch und ohne Fehler übersprungen.
+    progress_callback: optionaler Fortschritts-Hook (siehe
+        logic/pipeline_common.report_progress) für die Webapp-Fortschritts-
+        anzeige während der Browserprüfung.
+    deep_detection_timeouts: optionales dict mit nav_timeout_ms/
+        click_timeout_ms/settle_timeout_ms (siehe config.yaml
+        analysis.deep_detection_*) - zentral konfigurierbar, damit eine
+        einzelne langsame Website nie den ganzen Analyse-Batch blockiert.
     """
     result = dict(EMPTY_DETECTION)
     if not pages:
@@ -555,42 +760,143 @@ def detect_competitor(
     if not pages_data:
         return result
 
+    homepage_url = website or next(iter(pages.keys()), "")
+    homepage_netloc = _netloc(homepage_url)
+
     best_ibe = _best_match_for_system("ibe", providers, pages_data, list(pages.keys()))
     booking_type = _classify_booking_type(pages_data, best_ibe)
 
-    if use_playwright_fallback and best_ibe["score"] <= 0 and booking_type in ("unclear", "no_booking_detected"):
-        fallback_url = next(iter(pages.keys()), "")
-        if fallback_url:
-            fallback_pages = playwright_fallback_pages(fallback_url)
-            if fallback_pages:
-                for url, html in fallback_pages.items():
-                    try:
-                        pages_data[f"{url} (playwright)"] = _extract(html, url)
-                    except Exception:
-                        continue
-                best_ibe = _best_match_for_system("ibe", providers, pages_data, list(pages.keys()))
-                booking_type = _classify_booking_type(pages_data, best_ibe)
+    unknown_domain = ""
+    if best_ibe["tier"] != "A":
+        unknown_domain = _external_unmatched_booking_domain(pages_data, homepage_netloc)
+        if unknown_domain:
+            booking_type = "online_booking"
+
+    technical_failure = False
+    if use_playwright_fallback and best_ibe["tier"] != "A" and not unknown_domain and homepage_url:
+        _report_progress(progress_callback, "Browserprüfung wird gestartet (Stufe 2-4 Deep-Detection)")
+        timeouts = deep_detection_timeouts or {}
+        flow = analyze_booking_flow(
+            homepage_url,
+            nav_timeout_ms=timeouts.get("nav_timeout_ms", 12000),
+            click_timeout_ms=timeouts.get("click_timeout_ms", 3000),
+            settle_timeout_ms=timeouts.get("settle_timeout_ms", 4000),
+        )
+
+        # Stufe 2: gerenderte Seite(n) erneut statisch auswerten - macht
+        # JavaScript-generiertes HTML für Stufe 1 sichtbar.
+        rendered_pages = flow.get("rendered_pages") or {}
+        for url, html in rendered_pages.items():
+            if not html:
+                continue
+            try:
+                pages_data[f"{url}#rendered"] = _extract(html, url)
+            except Exception:
+                continue
+        if rendered_pages:
+            recomputed = _best_match_for_system(
+                "ibe", providers, pages_data, list(pages.keys()) + list(rendered_pages.keys())
+            )
+            if recomputed["score"] > best_ibe["score"]:
+                best_ibe = recomputed
+
+        # Stufe 3/4: Redirect-Ziel/Popups/neue iFrames/Netzwerkverkehr NACH
+        # dem aktiv ausgelösten Booking-Klick direkt gegen die KB prüfen -
+        # unabhängig davon, ob der Inhalt als HTML vorliegt (z.B. reine
+        # Netzwerk-Domain ohne eigenes HTML-Dokument).
+        raw_strings = []
+        if flow.get("final_url"):
+            raw_strings.append(flow["final_url"])
+        raw_strings.extend(flow.get("popup_urls") or [])
+        raw_strings.extend(flow.get("iframes_before_click") or [])
+        raw_strings.extend(flow.get("iframes_after_click") or [])
+        raw_strings.extend(flow.get("redirect_chain") or [])
+        raw_strings.extend(f"https://{d}/" for d in (flow.get("network_domains") or []))
+        deep_match = _match_strings_against_providers(raw_strings, providers)
+        if deep_match["score"] > best_ibe["score"]:
+            best_ibe = deep_match
+
+        booking_type = _classify_booking_type(pages_data, best_ibe)
+
+        if best_ibe["tier"] != "A":
+            flow_domain = _external_domain_from_flow(flow, homepage_netloc)
+            if flow_domain:
+                unknown_domain = flow_domain
+                booking_type = "online_booking"
+            elif unknown_domain:
+                booking_type = "online_booking"
+
+        reason = flow.get("detection_failure_reason", "") or ""
+        technical_failure = _is_technical_failure_reason(reason)
+
+        if flow.get("initial_url"):
+            result["initial_url"] = flow["initial_url"]
+        if flow.get("final_url"):
+            result["booking_final_url"] = flow["final_url"]
+        result["booking_buttons_found"] = flow.get("booking_buttons_found") or []
+        result["booking_button_texts"] = flow.get("booking_button_texts") or []
+        result["booking_button_hrefs"] = flow.get("booking_button_hrefs") or []
+        result["booking_click_attempted"] = bool(flow.get("booking_click_attempted"))
+        result["booking_click_success"] = bool(flow.get("booking_click_success"))
+        result["popup_urls"] = flow.get("popup_urls") or []
+        result["redirect_chain"] = flow.get("redirect_chain") or []
+        result["iframes_before_click"] = flow.get("iframes_before_click") or []
+        result["iframes_after_click"] = flow.get("iframes_after_click") or []
+        result["scripts_detected"] = flow.get("scripts_detected") or []
+        result["network_domains"] = flow.get("network_domains") or []
+        result["detection_failure_reason"] = reason
 
     result["booking_type"] = booking_type
-    entry_url, final_url = _booking_urls(pages_data, follow_redirects)
-    result["booking_entry_url"] = entry_url
-    result["booking_final_url"] = final_url
+    entry_url, static_final_url = _booking_urls(pages_data, follow_redirects)
+    result["booking_entry_url"] = result.get("initial_url") or entry_url
+    if not result.get("booking_final_url"):
+        result["booking_final_url"] = static_final_url
     result["detected_domains"] = _collect_detected_domains(pages_data, providers)
-    result["detected_iframes"] = _collect_unique(pages_data, "iframe_srcs")
-    result["detected_scripts"] = _collect_unique(pages_data, "script_srcs")
+    result["detected_iframes"] = sorted(
+        set(_collect_unique(pages_data, "iframe_srcs"))
+        | set(result["iframes_before_click"])
+        | set(result["iframes_after_click"])
+    )
+    result["detected_scripts"] = sorted(set(_collect_unique(pages_data, "script_srcs")) | set(result["scripts_detected"]))
     result["detected_query_parameters"] = _collect_query_parameters(pages_data)
 
     score = best_ibe["score"]
     tier = best_ibe.get("tier", "")
     provider_key = best_ibe.get("provider_key")
 
+    if unknown_domain and (score <= 0 or provider_key is None):
+        result.update({
+            "mitbewerber_ibe": UNBEKANNTE_IBE,
+            "mitbewerber_hauptanbieter": UNBEKANNTE_IBE,
+            "mitbewerber_ibe_sicherheit": "mittel",
+            "mitbewerber_erkennungssicherheit": "mittel",
+            "mitbewerber_erkennungsquelle": (
+                f"Buchungs-Button führt zu einer externen, aktiven Booking Engine (Domain: {unknown_domain}), "
+                "die keinem bekannten Anbieter in der Knowledgebase zugeordnet werden konnte."
+            ),
+            "mitbewerber_technische_evidenz": unknown_domain,
+            "competitor_detection_status": "possible",
+            "provider_status": "unknown_booking_engine",
+            "unknown_booking_domain": unknown_domain,
+        })
+        result["competitor"] = result["mitbewerber_hauptanbieter"]
+        result["competitor_confidence"] = result["mitbewerber_erkennungssicherheit"]
+        result["competitor_evidence"] = result["mitbewerber_erkennungsquelle"]
+        return result
+
     if score <= 0 or provider_key is None:
         result["competitor_detection_status"] = "not_detected"
+        result["provider_status"] = _derive_provider_status(booking_type, tier, None, "", technical_failure)
         if booking_type == "booking_request":
             result["mitbewerber_erkennungsquelle"] = (
                 "Auf der Website wurde lediglich ein Anfrageformular erkannt. Eine aktive Booking Engine "
                 "konnte nicht bestätigt werden."
             )
+        elif result["provider_status"] == "technical_failure":
+            result["mitbewerber_erkennungsquelle"] = (
+                f"Technische Deep-Detection konnte nicht durchgeführt werden: {result['detection_failure_reason']}"
+            )
+        result["competitor_evidence"] = result["mitbewerber_erkennungsquelle"]
         return result
 
     provider = providers[provider_key]
@@ -605,12 +911,14 @@ def detect_competitor(
             "mitbewerber_ibe_sicherheit": "nicht eindeutig",
             "mitbewerber_erkennungssicherheit": "nicht eindeutig",
             "competitor_detection_status": "possible",
+            "provider_status": "booking_request",
             "mitbewerber_erkennungsquelle": (
                 "Auf der Website wurde lediglich ein Anfrageformular erkannt. Eine aktive Booking Engine "
                 f"konnte nicht bestätigt werden (schwacher Zusatzhinweis auf {name}: {best_ibe['quelle']})."
             ),
             "mitbewerber_technische_evidenz": best_ibe["evidenz"],
         })
+        result["competitor_evidence"] = result["mitbewerber_erkennungsquelle"]
         return result
 
     if score >= MITTEL_SCHWELLE:
@@ -627,6 +935,7 @@ def detect_competitor(
             "pruefhinweis_mitbewerber": provider.get("pruefhinweise", "") or "",
             "_provider_key": provider_key,
             "competitor_detection_status": status,
+            "provider_status": "confirmed_provider" if tier == "A" else "unclear",
         })
     else:
         result.update({
@@ -637,6 +946,10 @@ def detect_competitor(
                 f"(schwacher Hinweis ohne ausreichenden technischen Nachweis: {best_ibe['quelle']})."
             ),
             "competitor_detection_status": "possible",
+            "provider_status": "unclear",
         })
 
+    result["competitor"] = result["mitbewerber_hauptanbieter"]
+    result["competitor_confidence"] = result["mitbewerber_erkennungssicherheit"]
+    result["competitor_evidence"] = result["mitbewerber_erkennungsquelle"]
     return result

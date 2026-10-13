@@ -245,8 +245,13 @@ logic/
                                      fachlich UNVERÄNDERT durch die Bestandskunden-/Neukunden-Trennung
   geocoding.py                     Adresse -> Koordinaten (Nominatim/OpenStreetMap, kein Pflicht-Key)
   routing_provider.py              Fahrzeit-/Distanzmatrix (optionale Routing-API, siehe unten)
-  competitor_detection.py          Rein technische Mitbewerber-Erkennung (siehe knowledge/competitors.yaml) -
-                                     von logic/pipeline_neukunden.py genutzt
+  competitor_detection.py          Rein technische Mitbewerber-/IBE-Erkennung, Stufe 1 (statisch, siehe
+                                     knowledge/competitors.yaml) + Orchestrierung der Stufe 2-4 Deep-
+                                     Detection - von logic/pipeline_neukunden.py und logic/pipeline.py genutzt
+  booking_flow_detection.py        Stufe 2-4 Deep-Detection: rendert die Website mit Chromium/Playwright,
+                                     klickt den Buchungs-Einstiegspunkt aktiv (nie einen Buchungsabschluss)
+                                     und beobachtet Navigation/Popups/neue Tabs/iFrames/Netzwerkrequests -
+                                     nur als Fallback, wenn Stufe 1 kein eindeutiges Ergebnis liefert
   competitor_comparison.py          Competitive Gap Analysis: DIRS21-Fit (unverändert) vs. Mitbewerber-
                                      Capability-Matrix - die Gap-/Capability-Bestimmung wird von
                                      logic/scoring_neukunden.py wiederverwendet
@@ -534,9 +539,50 @@ ausreichend für eine aktive Nutzung. `competitor_detection_status`
 Detailansicht zeigt zusätzlich "Erkannt durch: ..." sowie einen
 eingeklappten Debug-Bereich mit den technischen Rohdaten (gefundene
 Domains/iFrames/Scripts/Query-Parameter, Buchungslink + finale Redirect-URL).
-Redirect-Verfolgung und ein optionaler Playwright-Fallback für unklare Fälle
-sind als Funktionen vorhanden, standardmäßig aber deaktiviert, um keine
-zusätzlichen Live-Requests während der normalen Analyse auszulösen.
+**Vierstufige Detection-Pipeline** (siehe `logic/competitor_detection.py` und
+`logic/booking_flow_detection.py`): Stufe 1 (immer, siehe oben) analysiert
+nur das vom Server ausgelieferte HTML - kein JavaScript. Liefert das kein
+eindeutiges Ergebnis (kein Tier-A-Treffer), rendert Stufe 2 die Website
+tatsächlich mit dem vorinstallierten Chromium/Playwright und wertet das
+daraus entstehende HTML erneut aus (macht JS-generierte Buchungslinks/
+iFrames sichtbar). Stufe 3 klickt daraufhin aktiv den ersten gefundenen
+Buchungs-Einstiegspunkt ("Jetzt buchen", "Verfügbarkeit", "Book now", ...) -
+**niemals einen echten Buchungsabschluss** - und beobachtet Navigation,
+neue Tabs/Popups (`window.open`) sowie dynamisch nachgeladene iFrames. Ein
+vorsichtiger Cookie-Consent-Handler versucht vorher, offensichtliche
+"Alle akzeptieren"-Banner wegzuklicken, ohne bei Fehlschlag abzubrechen.
+Stufe 4 beobachtet währenddessen relevante Netzwerkrequests (XHR/fetch/
+document/iframe/script, keine Bilder/Fonts) und vergleicht Redirect-Ziel/
+Popup-URL/neue iFrames/Netzwerk-Domains direkt gegen die in
+`knowledge/competitors.yaml` hinterlegten `network_fingerprint`-Einträge
+(`booking_domains`/`iframe_domains`/`script_domains`/`network_domains`/
+`query_patterns`/`path_patterns`) - ein Anbieter wird so unabhängig von der
+Hotel-eigenen Domain erkannt (z.B. Seekda unter einer kundeneigenen
+Booking-Subdomain, nur über die `skd-*`-Query-Parameter im Redirect-Ziel).
+
+Führt der aktive Klick zu einer echten, funktionierenden externen Booking
+Engine, die keinem Anbieter in der Knowledgebase zugeordnet werden kann,
+wird das NICHT als "Nicht eindeutig erkannt" verworfen, sondern als
+eigener Status `provider_status = "unknown_booking_engine"` mit
+`unknown_booking_domain` gespeichert und in der Hauptspalte als
+"Unbekannte IBE" ausgegeben - so lässt sich die Knowledgebase gezielt um
+neue Fingerprints erweitern. Weitere `provider_status`-Werte:
+`confirmed_provider`, `booking_request`, `external_ota_only`,
+`no_booking_detected`, `technical_failure` (Browser/Seite technisch nicht
+erreichbar) und `unclear`.
+
+Die Deep-Detection (Stufe 2-4) läuft NUR, wenn Stufe 1 keinen Tier-A-Treffer
+liefert (Performance) und ist per `config.yaml` ->
+`analysis.enable_deep_booking_detection` steuerbar (Standard: an; Timeouts
+ebenfalls dort konfigurierbar). Fehlt Playwright/der Browser, wird das
+automatisch und ohne Fehler übersprungen - ein einzelnes unerreichbares
+Hotel bricht nie den gesamten Analyse-Batch ab. Innerhalb eines Analyse-
+Laufs wird jede Website höchstens einmal vollständig im Browser geladen
+(Cache in `logic/booking_flow_detection.py`). Die Webapp-Detailansicht
+zeigt "Erkannt durch: ..." sowie einen eingeklappten Debug-Bereich
+("🔧 Debug: technische Erkennungsdetails") mit allen Rohdaten (gefundene
+Buchungsbuttons, Klick erfolgreich?, Popup-/Redirect-/iFrame-/Netzwerk-
+Domains, Grund für ein nicht eindeutiges Ergebnis).
 
 **Fokus-Mitbewerber** (`knowledge/competitors.yaml` ->
 `sales_relevance.focus_competitor: true`): Seekda, HotelNetSolutions,

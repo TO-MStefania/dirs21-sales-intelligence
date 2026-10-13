@@ -42,6 +42,15 @@ COMPETITOR_STATUS_LABELS = {
     "possible": "Möglich (unbestätigt)",
     "not_detected": "Nicht erkannt",
 }
+PROVIDER_STATUS_LABELS = {
+    "confirmed_provider": "Anbieter bestätigt",
+    "unknown_booking_engine": "Unbekannte, aber aktive Booking Engine",
+    "booking_request": "Nur Buchungsanfrage (keine IBE)",
+    "external_ota_only": "Nur externe OTA (z.B. Booking.com)",
+    "no_booking_detected": "Keine Buchungsmöglichkeit erkannt",
+    "technical_failure": "Technische Prüfung fehlgeschlagen",
+    "unclear": "Nicht eindeutig",
+}
 
 LIMIT_OPTIONS = ["5", "10", "20", "50", "Alle"]
 PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id"]
@@ -220,7 +229,7 @@ def _render_detail(original_index: int, row: pd.Series, config: dict) -> None:
         st.markdown("---")
         st.markdown('<div class="d21-section-title">B) Erkannte Systemlandschaft</div>', unsafe_allow_html=True)
         booking_type = row.get("booking_type", "")
-        detection_status = row.get("competitor_detection_status", "")
+        provider_status = row.get("provider_status", "") or row.get("competitor_detection_status", "")
         c_booking, c_ibe, c_status = st.columns(3)
         with c_booking:
             detail_field("Booking Type", BOOKING_TYPE_LABELS.get(booking_type, booking_type or "–"))
@@ -228,7 +237,7 @@ def _render_detail(original_index: int, row: pd.Series, config: dict) -> None:
             detail_field("IBE / Booking Engine", row.get("ibe_anbieter", ""))
             detail_field("Erkennungssicherheit", row.get("mitbewerber_erkennungssicherheit", "") or "–")
         with c_status:
-            detail_field("Status", COMPETITOR_STATUS_LABELS.get(detection_status, detection_status or "–"))
+            detail_field("Status", PROVIDER_STATUS_LABELS.get(provider_status, provider_status or "–"))
         c_pms, c_cm = st.columns(2)
         with c_pms:
             detail_field("PMS", row.get("pms_anbieter", ""))
@@ -241,24 +250,52 @@ def _render_detail(original_index: int, row: pd.Series, config: dict) -> None:
                 "Auf der Website wurde lediglich ein Anfrageformular erkannt. Eine aktive Booking Engine "
                 "konnte nicht bestätigt werden."
             )
+        if row.get("unknown_booking_domain"):
+            st.caption(
+                f"🔍 Aktive, aber unbekannte Booking Engine erkannt (Domain: {row['unknown_booking_domain']}) - "
+                "noch nicht in der Mitbewerber-Knowledgebase hinterlegt. Kann zur gezielten Erweiterung der "
+                "Knowledgebase genutzt werden."
+            )
         if row.get("ist_fokus_mitbewerber"):
             st.caption("⭐ Fokus-Mitbewerber (häufig im relevanten Pitch-/Wettbewerbsumfeld)")
         detail_field("DIRS21-Koexistenz", row.get("dirs21_koexistenz", "") or "–")
 
-        with st.expander("🔧 Debug: technische Rohdaten der Mitbewerber-Erkennung", expanded=False):
-            detail_field("Booking Entry URL", row.get("booking_entry_url", "") or "–")
-            detail_field("Booking Final URL (nach Redirect)", row.get("booking_final_url", "") or "–")
-            for label, key in (
-                ("Gefundene Domains", "detected_domains"),
-                ("Gefundene iFrames", "detected_iframes"),
-                ("Gefundene Scripts", "detected_scripts"),
-                ("Gefundene Query-Parameter", "detected_query_parameters"),
-            ):
+        with st.expander("🔧 Debug: technische Erkennungsdetails", expanded=False):
+            st.caption(
+                "Rohdaten der technischen Mitbewerber-/IBE-Erkennung (Stufe 1 statisch, Stufe 2-4 Deep-"
+                "Detection mit Chromium/Playwright, falls ausgelöst) - hilfreich, um die Knowledgebase gezielt "
+                "um neue Fingerprints zu erweitern."
+            )
+
+            def _list_field(label, key):
                 values = row.get(key)
                 if not isinstance(values, list):
                     values = []
-                detail_field(label, ", ".join(values) if values else "–")
+                detail_field(label, ", ".join(str(v) for v in values) if values else "–")
+
+            detail_field("Booking Entry URL", row.get("booking_entry_url", "") or row.get("initial_url", "") or "–")
+            detail_field("Booking Final URL (nach Redirect)", row.get("booking_final_url", "") or "–")
+            _list_field("Gefundene Domains (bekannte Anbieter)", "detected_domains")
+            _list_field("Gefundene iFrames", "detected_iframes")
+            _list_field("Gefundene Scripts", "detected_scripts")
+            _list_field("Gefundene Query-Parameter", "detected_query_parameters")
             detail_field("Technische Evidenz (stärkster Fund)", row.get("mitbewerber_technische_evidenz", "") or "–")
+
+            st.markdown("**Deep-Detection (Stufe 2-4, nur falls ausgelöst):**")
+            _list_field("Gefundene Buchungsbuttons", "booking_button_texts")
+            _list_field("Buchungsbutton-Links/Attribute", "booking_button_hrefs")
+            d1, d2 = st.columns(2)
+            with d1:
+                detail_field("Buchungsbutton geklickt?", "Ja" if row.get("booking_click_attempted") else "Nein")
+            with d2:
+                detail_field("Klick erfolgreich?", "Ja" if row.get("booking_click_success") else "Nein")
+            _list_field("Popup-/neue-Tab-URLs", "popup_urls")
+            _list_field("Redirect-Kette", "redirect_chain")
+            _list_field("iFrames vor Klick", "iframes_before_click")
+            _list_field("iFrames nach Klick", "iframes_after_click")
+            _list_field("Relevante Netzwerk-Domains", "network_domains")
+            if row.get("detection_failure_reason"):
+                st.caption(f"Grund, warum kein (weiterer) Anbieter erkannt wurde: {row['detection_failure_reason']}")
 
         st.markdown("---")
         st.markdown('<div class="d21-section-title">C) Kernpotenzial</div>', unsafe_allow_html=True)
