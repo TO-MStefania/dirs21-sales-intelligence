@@ -1,0 +1,383 @@
+# Mitbewerber-Knowledgebase für den Webapp-Reiter "Neukundenakquise"
+# (logic/competitor_detection.py, logic/competitor_comparison.py).
+#
+# Zentrale, erweiterbare Struktur (siehe Auftrag): neue Mitbewerber oder neue
+# technische Fingerprints werden ausschließlich HIER ergänzt - niemals im
+# Code hartcodiert. logic/competitor_detection.py kennt keine Anbieternamen
+# oder Domains, sondern liest ausschließlich diese Datei.
+#
+# AUFBAU pro Anbieter:
+#   name                 - Anzeigename
+#   typ                  - fachliche Kategorie (PMS | IBE | Channelmanager |
+#                           "IBE + Channelmanager" | All-In-One)
+#   fokus_staerken       - kurze, neutrale Beschreibung (keine Werturteile,
+#                           siehe Auftrag "Mitbewerber != schlechter")
+#   kundentypen          - "typischer Kunde" - NUR für Vertriebsverständnis/
+#                           Gesprächsvorbereitung, NIEMALS als technischer
+#                           Erkennungsbeweis verwendet (siehe Auftrag)
+#   anbieter_domain      - Haupt-/Produktdomain des Anbieters (Information,
+#                           kein alleiniges Erkennungsmerkmal)
+#   dirs21_coexistence   - ja | nein | nicht bestätigt | intern pruefen
+#                           ("nicht auf öffentlicher Partnerliste gefunden"
+#                           ist NICHT gleich "existiert technisch nicht" -
+#                           siehe Auftrag Abschnitt 16)
+#   capabilities         - Capability-Matrix je DIRS21-Vergleichsdimension,
+#                           NUR kontrollierte Werte (yes|partial|no|unknown je
+#                           status, siehe Auftrag "Competitive Gap Analysis").
+#                           Nur fachlich bestätigte Informationen hinterlegt;
+#                           alles andere bleibt bewusst "unknown" statt
+#                           geraten (siehe Modul-Docstring
+#                           logic/competitor_comparison.py für die genaue
+#                           Herkunft jedes Werts).
+#   fingerprints         - Liste technischer Erkennungsregeln (siehe unten)
+#   pruefhinweise        - Hinweise zur Einordnung/Unsicherheiten
+#   quellen              - Herkunft der hinterlegten Informationen
+#
+# FINGERPRINT-REGEL-FELDER:
+#   system         - ibe | pms | channel_manager (siehe Auftrag Abschnitt 5:
+#                    technisch ist über die öffentliche Website nur die
+#                    Booking Engine (IBE) direkt nachweisbar - für PMS und
+#                    Channelmanager gibt es aktuell KEINE öffentlich
+#                    sichtbaren technischen Fingerprints, siehe
+#                    logic/competitor_detection.py-Moduldokumentation)
+#   signal         - domain | query_params | keyword
+#   pattern        - bei domain/keyword: ein einzelner String (Teilstring-
+#                    Suche, klein geschrieben); bei query_params: eine Liste
+#                    von Query-Parameter-Namen
+#   min_matches    - nur bei query_params: Mindestanzahl gleichzeitig
+#                    gefundener Parameter (siehe Seekda - Auftrag Abschnitt
+#                    14, mehrere eindeutige skd-* Parameter nötig)
+#   evidence_score - 0-100 (siehe Auftrag Abschnitt 12 "Erkennungssicherheit")
+#   hinweis        - optionaler Erkennungsgrund-Text für die Detailansicht
+
+providers:
+  hotelnetsolutions:
+    name: "HotelNetSolutions"
+    typ: "IBE + Channelmanager"
+    fokus_staerken: "Channelmanagement und Buchungsengine (OnePageBooking) für unabhängige Hotels"
+    kundentypen: "Kleinere bis mittlere unabhängige Hotels"
+    anbieter_domain: "onepagebooking.com"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "no"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "onepagebooking.com", evidence_score: 100,
+         hinweis: "onepagebooking.com im Buchungslink/iframe gefunden - sehr starkes Produktmerkmal von HotelNetSolutions."}
+      - {system: ibe, signal: keyword, pattern: "onepagebooking", evidence_score: 60}
+      - {system: ibe, signal: keyword, pattern: "hotelnetsolutions", evidence_score: 60}
+      - {system: ibe, signal: keyword, pattern: "hns", evidence_score: 20,
+         hinweis: "'HNS' ist ein sehr generisches Kürzel - allein kein starker Nachweis."}
+    pruefhinweise: "OnePageBooking ist das entscheidende Produktmerkmal; die reine Textnennung von 'HNS' allein reicht nicht."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  siteminder:
+    name: "SiteMinder"
+    typ: "IBE + Channelmanager"
+    fokus_staerken: "Hotel-Commerce-Plattform mit Buchungsengine und Channelmanagement"
+    kundentypen: "Hotels aller Größen, international verbreitet"
+    anbieter_domain: "siteminder.com"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "no"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "partial"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "no"}
+      insights_reporting: {status: "partial"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "direct-book.com", evidence_score: 100,
+         hinweis: "direct-book.com im tatsächlichen Buchungsflow gefunden - sehr starkes SiteMinder-Merkmal."}
+      - {system: ibe, signal: domain, pattern: "thebookingbutton.com", evidence_score: 85,
+         hinweis: "Älterer/weiterer technischer SiteMinder-Hinweis (thebookingbutton.com)."}
+      - {system: ibe, signal: domain, pattern: "book-directonline.com", evidence_score: 85}
+      - {system: ibe, signal: keyword, pattern: "siteminder", evidence_score: 20}
+    pruefhinweise: "Nur der Name 'SiteMinder' im sichtbaren Text oder Datenschutz allein ist kein technischer Nachweis (siehe Auftrag Abschnitt 11/41)."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  hotel_spider:
+    name: "Hotel-Spider"
+    typ: "IBE + Channelmanager"
+    fokus_staerken: "Distribution, Channelmanagement und Buchungsengine"
+    kundentypen: "Unabhängige Hotels und kleinere Hotelketten"
+    anbieter_domain: "hotel-spider.com"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "no"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "reservations.hotel-spider.com", evidence_score: 100,
+         hinweis: "reservations.hotel-spider.com im Buchungslink/iframe gefunden."}
+      - {system: ibe, signal: keyword, pattern: "hotel-spider", evidence_score: 20}
+    pruefhinweise: ""
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  mews:
+    name: "Mews"
+    typ: "All-In-One"
+    fokus_staerken: "Cloud-PMS mit eigener Buchungsengine und Channelmanagement"
+    kundentypen: "Hotels aller Größen, auch Hostels/Apartments"
+    anbieter_domain: "mews.com"
+    dirs21_coexistence: "ja"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "app.mews.com", evidence_score: 95,
+         hinweis: "app.mews.com im Buchungs-/Distributor-Kontext gefunden. Mews bietet grundsätzlich eine All-In-One-Plattform; der Einsatz des Mews PMS ist dadurch allein NICHT bestätigt."}
+      - {system: ibe, signal: keyword, pattern: "mews", evidence_score: 20,
+         hinweis: "'Mews' allein im Text ist generisch (Eigenname) - kein technischer Nachweis."}
+    pruefhinweise: "NICHT automatisch PMS=Mews annehmen, nur weil die Booking Engine gefunden wurde (siehe Auftrag Abschnitt 5/6). Mews hat eine öffentlich bekannte DIRS21-Schnittstelle/Koexistenzmöglichkeit."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  softtec:
+    name: "SoftTec"
+    typ: "All-In-One"
+    fokus_staerken: "Hotelsoftware mit eigener Buchungsengine"
+    kundentypen: "Kleinere bis mittlere Hotels/Gasthöfe (DACH-Raum)"
+    anbieter_domain: "softtec.software"
+    dirs21_coexistence: "ja"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      # Der hotelspezifische Pfad nach der Domain ist variabel (z.B.
+      # "/winzerstube") - deshalb NUR auf die Domain selbst prüfen, siehe
+      # Auftrag ("nicht auf /winzerstube hart codieren").
+      - {system: ibe, signal: domain, pattern: "booking2.softtec.software", evidence_score: 100,
+         hinweis: "booking2.softtec.software (Link/Redirect/iframe) gefunden - sehr starkes SoftTec-Merkmal."}
+      - {system: ibe, signal: keyword, pattern: "softtec", evidence_score: 20}
+    pruefhinweise: "SoftTec verfügt über eine DIRS21-Schnittstelle/Koexistenzmöglichkeit."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  easybooking:
+    name: "easyBooking"
+    typ: "All-In-One"
+    fokus_staerken: "Hotelsoftware (PMS) mit eigener Buchungsengine, u.a. für Österreich"
+    kundentypen: "Kleinere bis mittlere Hotels (v.a. Alpenraum)"
+    anbieter_domain: "easy-booking.at"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      # IDs/Hashes im Pfad sind hotelspezifisch - NICHT hart codieren, nur
+      # die Domain selbst zählt als Fingerprint (siehe Auftrag).
+      - {system: ibe, signal: domain, pattern: "bookingmanager.easy-booking.at", evidence_score: 100,
+         hinweis: "bookingmanager.easy-booking.at gefunden - sehr starkes easyBooking-Merkmal."}
+      - {system: ibe, signal: keyword, pattern: "easy-booking.at", evidence_score: 60}
+      - {system: ibe, signal: keyword, pattern: "easybooking", evidence_score: 40}
+      - {system: ibe, signal: keyword, pattern: "zadego", evidence_score: 40}
+    pruefhinweise: ""
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  roomraccoon:
+    name: "RoomRaccoon"
+    typ: "All-In-One"
+    fokus_staerken: "Cloud-PMS mit eigener Buchungsengine und Channelmanagement"
+    kundentypen: "Kleinere bis mittlere, unabhängige Hotels"
+    anbieter_domain: "roomraccoon.com"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "booking.roomraccoon.com", evidence_score: 95,
+         hinweis: "booking.roomraccoon.com gefunden."}
+      - {system: ibe, signal: keyword, pattern: "roomraccoon", evidence_score: 30,
+         hinweis: "White-Label-/eigene Domain bei RoomRaccoon möglich - reine Textnennung ist schwächer als der Domain-Fund."}
+    pruefhinweise: "Achtung White-Label-/eigene Domain möglich - Domain-Fingerprint daher nicht immer vorhanden, zusätzlich HTML/Scripts/Redirects prüfen (siehe Auftrag)."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  casablanca:
+    name: "CASABLANCA"
+    typ: "All-In-One"
+    fokus_staerken: "Hotelsoftware (PMS) mit eigener Buchungsengine"
+    kundentypen: "Hotels im DACH-Raum"
+    anbieter_domain: "casablanca.at"
+    dirs21_coexistence: "ja"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "ibe.casablanca.at", evidence_score: 100}
+      - {system: ibe, signal: domain, pattern: "bookingengine.casablanca.at", evidence_score: 100}
+      - {system: ibe, signal: keyword, pattern: "casablanca hotelsoftware", evidence_score: 60}
+    pruefhinweise: "CASABLANCA hat eine DIRS21-Schnittstelle/Koexistenzmöglichkeit."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  guestline:
+    name: "Guestline"
+    typ: "All-In-One"
+    fokus_staerken: "Cloud-PMS mit eigener Buchungsengine (DBM), v.a. UK/Europa"
+    kundentypen: "Hotels und Hotelgruppen"
+    anbieter_domain: "guestline.com"
+    dirs21_coexistence: "ja"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "booking.eu.guestline.app", evidence_score: 95,
+         hinweis: "Aktueller Guestline-Booking-Fingerprint."}
+      - {system: ibe, signal: domain, pattern: "dbm.guestline.net", evidence_score: 85,
+         hinweis: "Legacy Guestline DBM-Integration."}
+      - {system: ibe, signal: keyword, pattern: "guestline", evidence_score: 20}
+    pruefhinweise: "Guestline hat eine DIRS21-Schnittstelle/Koexistenzmöglichkeit."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  viato:
+    name: "Viato"
+    typ: "IBE + Channelmanager"
+    fokus_staerken: "Buchungsengine und Channelmanagement (CRS)"
+    kundentypen: "Hotels im DACH-Raum"
+    anbieter_domain: "viatocrs.de"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "no"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "booking.viatocrs.de", evidence_score: 100,
+         hinweis: "booking.viatocrs.de gefunden - häufig per iframe eingebunden (/cbe-relaunch/)."}
+      - {system: ibe, signal: domain, pattern: "/cbe-relaunch/", evidence_score: 90}
+      - {system: ibe, signal: keyword, pattern: "viato", evidence_score: 20}
+    pruefhinweise: "Viato ist häufig über iframe eingebunden - iframe-src explizit auf booking.viatocrs.de bzw. /cbe-relaunch/ prüfen."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  vioma:
+    name: "vioma"
+    typ: "IBE + Channelmanager"
+    fokus_staerken: "Reservierungs- und Vertriebssystem (CST)"
+    kundentypen: "Hotels im DACH-Raum"
+    anbieter_domain: "viomassl.com"
+    dirs21_coexistence: "ja"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "no"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "viomassl.com", evidence_score: 85,
+         hinweis: "viomassl.com als technische vioma-Domain gefunden."}
+      - {system: ibe, signal: keyword, pattern: "vioma booking", evidence_score: 55}
+      - {system: ibe, signal: keyword, pattern: "cst7", evidence_score: 40}
+      - {system: ibe, signal: keyword, pattern: "cst", evidence_score: 20,
+         hinweis: "'CST' allein ist sehr generisch - kein starker Nachweis."}
+      - {system: ibe, signal: keyword, pattern: "vioma", evidence_score: 20}
+    pruefhinweise: "DIRS21 und vioma können grundsätzlich koexistieren (interne Schnittstellen-/Partnerinformation)."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  busyrooms:
+    name: "BusyRooms"
+    typ: "All-In-One"
+    fokus_staerken: "CRS + Buchungsengine + Channelmanagement + Mini-PMS"
+    kundentypen: "Kleinere bis mittlere, unabhängige Hotels"
+    anbieter_domain: "direct-reservation.net"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "partial"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      - {system: ibe, signal: domain, pattern: "direct-reservation.net", evidence_score: 95,
+         hinweis: "(Sub-)Domain von direct-reservation.net im Buchungsflow gefunden."}
+      - {system: ibe, signal: keyword, pattern: "busyrooms", evidence_score: 40}
+      - {system: ibe, signal: keyword, pattern: "busy rooms", evidence_score: 40}
+    pruefhinweise: "BusyRooms bietet laut Knowledgebase nur ein Mini-PMS (status: partial)."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"
+
+  seekda:
+    name: "Seekda"
+    typ: "All-In-One"
+    fokus_staerken: "Cloud-PMS mit eigener Buchungsengine, häufig unter kundeneigener Booking-Domain"
+    kundentypen: "Hotels aller Größen (v.a. DACH-Raum)"
+    anbieter_domain: "seekda.com"
+    dirs21_coexistence: "nicht bestätigt"
+    capabilities:
+      booking_engine: {status: "yes"}
+      channel_manager: {status: "yes"}
+      pms: {status: "yes"}
+      voucher_shop: {status: "unknown"}
+      bookable_extras: {status: "unknown"}
+      mice: {status: "unknown"}
+      event_assistant: {status: "unknown"}
+      insights_reporting: {status: "unknown"}
+    fingerprints:
+      # Seekda kann unter einer kundeneigenen Booking-Domain laufen (z.B.
+      # booking.hotelname.de) - deshalb NICHT nur Domain-Matching verwenden,
+      # sondern primär die eindeutigen skd-* Query-Parameter (siehe Auftrag).
+      - {system: ibe, signal: query_params, min_matches: 2, evidence_score: 95,
+         pattern: [
+           "skd-property-code", "skd-checkin", "skd-checkout", "skd-total-rooms",
+           "skd-language-code", "skd-currency-code", "skd-price-type",
+           "skd-time-price-base", "skd-scroll-to-room",
+         ],
+         hinweis: "Mehrere eindeutige skd-* Booking-Parameter gefunden - gilt unabhängig von der Domain als starker Seekda-Nachweis."}
+      - {system: ibe, signal: domain, pattern: "officialbookings.com", evidence_score: 80}
+      - {system: ibe, signal: keyword, pattern: "seekda", evidence_score: 20}
+    pruefhinweise: "Domain allein ist bei Seekda KEIN verlässliches Merkmal (kundeneigene Booking-Subdomain möglich) - die skd-* Parameter sind der entscheidende Nachweis."
+    quellen: "DIRS21 Sales Intelligence - Mitbewerber-Knowledgebase (Auftrag)"

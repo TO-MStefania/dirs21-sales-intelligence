@@ -212,6 +212,12 @@ logic/
                                      aktuell-vs-optimiert-Vergleich, Vorschläge entlang der Route
   geocoding.py                     Adresse -> Koordinaten (Nominatim/OpenStreetMap, kein Pflicht-Key)
   routing_provider.py              Fahrzeit-/Distanzmatrix (optionale Routing-API, siehe unten)
+  competitor_detection.py          Rein technische Mitbewerber-Erkennung (siehe knowledge/competitors.yaml)
+  competitor_comparison.py          Competitive Gap Analysis: DIRS21-Fit (unverändert) vs. Mitbewerber-
+                                     Capability-Matrix - erzeugt KEINE Vertriebsansätze
+knowledge/
+  competitors.yaml                 Zentrale, erweiterbare Mitbewerber-Knowledgebase (Fingerprints,
+                                     Typ, DIRS21-Koexistenz, Capability-Matrix)
 data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert, nur für analyze.py)
 exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert, nur für analyze.py)
 ```
@@ -372,6 +378,85 @@ Sales-Intelligence-Daten erfolgt bevorzugt über die DIRS21-ID, sonst über
 einen eindeutigen Unternehmensnamen; ist kein sicheres Matching möglich, wird
 der Termin trotzdem geplant, nur ohne Zusatzinformationen.
 
+## Neukundenakquise (dritter Reiter in app.py) - Competitive Gap Analysis
+
+Eigenständiger Funktionsbereich für Unternehmen mit den Adressgruppen
+Akquise, Neukunde, Interessent oder ehemaliger Kunde. Nutzt ausschließlich
+die bereits im Reiter "Sales Intelligence" berechneten Ergebnisse (kein
+zusätzlicher Upload, keine zweite Analyse) und erkennt zusätzlich, welcher
+Mitbewerber (Booking-Engine-Anbieter) aktuell technisch im Einsatz ist.
+
+**Wichtig:** Dieser Reiter erzeugt bewusst **keine Gesprächseinstiege,
+Gesprächsleitfäden oder Vertriebsansätze**. Er beantwortet ausschließlich die
+Frage "Wo besteht gegenüber dem technisch erkannten Mitbewerber ein
+belegbares Differenzierungspotenzial?" als nüchterne Einstufung (Competitive
+Gap), nicht als Formulierungshilfe.
+
+**Drei strikt getrennte Ebenen:**
+1. **Hotelbedarf / DIRS21-Fit** - ausschließlich die bestehende, unveränderte
+   Scoring-/Empfehlungslogik (`logic/scoring.py`, `logic/recommendations.py`).
+   Der Mitbewerber kann diese Fit-Scores an keiner Stelle erhöhen oder senken.
+2. **Erkannte Systemlandschaft** - rein technische Erkennung
+   (`logic/competitor_detection.py`): prüft Buchungslinks, iFrames, Scripts,
+   Formulare und Query-Parameter der bereits gecrawlten Seiten (keine
+   zusätzlichen Web-Requests) gegen die zentrale Knowledgebase
+   `knowledge/competitors.yaml`. Liefert getrennte Felder für IBE/Booking
+   Engine, PMS und Channelmanager - **die erkannte Booking Engine führt
+   NIEMALS automatisch zu "PMS erkannt"**, da dafür aktuell kein öffentlich
+   sichtbares technisches Merkmal existiert (nur IBE wird aktuell technisch
+   erkannt; PMS/Channelmanager bleiben bewusst "Nicht eindeutig erkannt").
+   Erkennungssicherheit: **hoch** (eindeutige Domain/iFrame/Query-Parameter),
+   **mittel** (z.B. Namensnennung in der Datenschutzbestimmung) oder **nicht
+   eindeutig** (reine Texterwähnung) - ein konkreter Anbietername wird nur ab
+   "mittel" ausgegeben. Hoteltyp, Region oder "typischer Kunde" eines
+   Anbieters sind niemals ein Erkennungsmerkmal.
+3. **Wettbewerbs-/Differenzierungspotenzial** - ausschließlich
+   `logic/competitor_comparison.py`: vergleicht den (unveränderten) DIRS21-Fit
+   je Produkt mit der Capability-Matrix des erkannten Mitbewerbers aus der
+   Knowledgebase (`yes`/`partial`/`no`/`unknown` je Funktion) zu einem
+   **Competitive-Gap-Status** (`Sehr hoch`/`Hoch`/`Mittel`/`Gering`/
+   `Kein klarer Gap`/`Unbekannt`). Ein niedriger DIRS21-Fit erzeugt nie einen
+   hohen Gap, nur weil der Mitbewerber die Funktion nicht anbietet; ein
+   unbekannter Funktionsumfang (`unknown`) wird nie als "nein" interpretiert.
+
+**Mitbewerber-Knowledgebase** (`knowledge/competitors.yaml`): zentrale,
+erweiterbare YAML-Datei - neue Anbieter oder Fingerprints werden
+ausschließlich dort ergänzt, nie im Code. Aktuell hinterlegt: HotelNetSolutions,
+SiteMinder, Hotel-Spider, Mews, SoftTec, easyBooking, RoomRaccoon, CASABLANCA,
+Guestline, Viato, vioma, BusyRooms, Seekda - jeweils mit Typ (PMS/IBE/
+Channelmanager/All-In-One), `dirs21_coexistence` (ja/nein/nicht bestätigt)
+und einer Capability-Matrix für die fünf vergleichbaren DIRS21-Module (PLUS,
+Gutscheinshop, MICE, Event-Assistent, Insights). Nur fachlich bestätigte
+Capability-Werte sind hinterlegt - alles andere bleibt bewusst `unknown`
+(siehe Moduldokumentation von `logic/competitor_comparison.py` für die genaue
+Herkunft jedes Werts).
+
+**Neukunden-Priorität:** eigenständige A-D-Einstufung, komplett unabhängig
+von der bestehenden `gesamtprioritaet` der Sales-Intelligence-Analyse. Ein
+erkannter Mitbewerber allein erzeugt nie automatisch eine hohe Priorität -
+nur die Kombination aus einem relevanten DIRS21-Fit UND einem belegten
+Competitive Gap kann die Priorität anheben.
+
+**Webapp-Ansicht:** kompakte Übersichtstabelle (Unternehmen, Ort,
+Adressgruppe, Zimmeranzahl, Mitbewerber, Mitbewerber-Typ, Top DIRS21
+Potenzial, Fit, Competitive Gap, Neukunden-Priorität) mit Filtern, sowie eine
+Detailansicht pro Unternehmen mit erkannter Systemlandschaft (inkl.
+Erkennungsgrund), DIRS21-Kompatibilität, einer Produktmatrix (DIRS21-Produkt /
+Fit / Mitbewerber-Abdeckung / Competitive Gap) und einer Möglichkeit, die
+Mitbewerber-Erkennung **nur für die aktuelle Session** manuell zu korrigieren
+(überschreibt nie `knowledge/competitors.yaml`).
+
+**Excel-Export:** das bestehende Sales-Intelligence-Tabellenblatt wird um die
+Spalten `mitbewerber`, `mitbewerber_typ`, `mitbewerber_erkennungssicherheit`,
+`dirs21_koexistenz`, `staerkstes_dirs21_potenzial`,
+`staerkstes_dirs21_potenzial_fit`, `staerkstes_differenzierungspotenzial`,
+`competitive_gap`, `neukunden_prioritaet`, `pms_anbieter`, `ibe_anbieter` und
+`channelmanager_anbieter` ergänzt (mit Ampelformatierung) - alle übrigen,
+bestehenden Spalten und deren Reihenfolge bleiben unverändert. Die
+detaillierte technische Evidenz und die vollständige Produktmatrix stehen
+bewusst nur in der Webapp-Detailansicht, nicht im Excel-Export ("Excel
+schlank halten").
+
 ## Fachliche Logik (Kurzüberblick)
 
 Die vollständige fachliche Logik stammt aus der DIRS21 Sales Knowledge Base
@@ -471,10 +556,11 @@ Ampelsystem formatiert, ohne die Werte selbst zu verändern:
 ## Tests
 
 Regressionstests (Empfehlungslogik, MICE-Fit-Scoring, Zimmeranzahl-Erkennung,
-Robustheit der Streamlit-Oberfläche bei fehlenden optionalen Spalten) laufen
-ohne zusätzliche Abhängigkeiten über das Python-Standardmodul `unittest`
-(für die Oberflächentests zusätzlich über `streamlit.testing`, das bereits
-mit `streamlit` installiert wird):
+Mitbewerber-Fingerprint-Erkennung, Competitive Gap Analysis, Robustheit der
+Streamlit-Oberfläche bei fehlenden optionalen Spalten) laufen ohne
+zusätzliche Abhängigkeiten über das Python-Standardmodul `unittest` (für die
+Oberflächentests zusätzlich über `streamlit.testing`, das bereits mit
+`streamlit` installiert wird):
 
 ```bash
 python -m unittest discover tests

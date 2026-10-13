@@ -9,6 +9,9 @@ sowohl vom lokalen CLI-Tool (analyze.py) als auch von der Streamlit-Webapp
 
 from datetime import datetime
 
+from logic.competitor_comparison import EMPTY_COMPARISON, build_comparison
+from logic.competitor_detection import EMPTY_DETECTION as EMPTY_COMPETITOR_DETECTION
+from logic.competitor_detection import detect_competitor
 from logic.dirs21_detection import detect_dirs21
 from logic.recommendations import build_recommendation
 from logic.room_count_detection import resolve_room_count
@@ -21,6 +24,30 @@ from logic.status_detection import (
 )
 from logic.website_crawler import crawl_website
 from logic import web_search as web_search_module
+
+# Neukundenakquise / Competitive Gap Analysis (siehe logic/competitor_detection.py,
+# logic/competitor_comparison.py) - rein additiv ans Ende von RESULT_COLUMNS
+# angehängt, damit die Reihenfolge/Bedeutung aller bestehenden Spalten
+# unverändert bleibt (siehe Auftrag "bestehende Sales-Intelligence-Logik
+# nicht unnötig verändern"). Bewusst KEIN Gesprächseinstieg/Vertriebsansatz-
+# Feld (siehe Auftrag - Folgeänderung "Competitive Gap Analysis" statt
+# Vertriebsansatz-Generierung).
+COMPETITOR_RESULT_COLUMNS = [
+    "mitbewerber", "mitbewerber_typ", "mitbewerber_erkennungssicherheit",
+    "dirs21_koexistenz", "staerkstes_dirs21_potenzial", "staerkstes_dirs21_potenzial_fit",
+    "staerkstes_differenzierungspotenzial", "competitive_gap", "neukunden_prioritaet",
+    "pms_anbieter", "ibe_anbieter", "channelmanager_anbieter",
+]
+
+# Zusätzliche Mitbewerber-/Competitive-Gap-Details - bewusst NICHT Teil von
+# RESULT_COLUMNS (siehe Auftrag "Excel schlank halten"): die technische
+# Evidenz, der Erkennungsgrund und die vollständige Produktmatrix werden nur
+# in der Webapp-Detailansicht des Reiters "Neukundenakquise" angezeigt.
+COMPETITOR_DETAIL_COLUMNS = [
+    "mitbewerber_ibe_sicherheit", "mitbewerber_pms_sicherheit", "mitbewerber_channelmanager_sicherheit",
+    "mitbewerber_erkennungsquelle", "mitbewerber_technische_evidenz", "pruefhinweis_mitbewerber",
+    "staerkstes_differenzierungspotenzial_score", "mitbewerber_produktmatrix",
+]
 
 # Exakte Ausgabespalten - kompakt und vertriebsorientiert, keine
 # Begründungsspalten, keine weiteren Potenziale, kein Gesprächseinstieg.
@@ -39,7 +66,7 @@ RESULT_COLUMNS = [
     "fachliche_top_empfehlung", "fachliche_top_empfehlung_score",
     "vertriebliche_prioritaetsaktion", "zusatzmodul_als_argument",
     "gesamtprioritaet", "pruefhinweis", "crawler_status", "analyse_datum",
-]
+] + COMPETITOR_RESULT_COLUMNS
 
 # Kurze, faktenbasierte Fit-Begründungen je Produkt (siehe logic/scoring.py) -
 # bewusst NICHT Teil von RESULT_COLUMNS: analyze.py und export_to_excel_bytes
@@ -226,6 +253,48 @@ def analyze_company(company: dict, config: dict, progress_callback=None) -> dict
         row["gesamtprioritaet"] = recommendation["gesamtprioritaet"]
     except Exception as exc:
         pruefhinweise.append(f"Empfehlungslogik fehlgeschlagen: {exc}")
+
+    # Neukundenakquise / Competitive Gap Analysis (siehe logic/competitor_detection.py,
+    # logic/competitor_comparison.py) - rein additiver Analyseschritt, der die
+    # oben berechneten Fit-Scores/Empfehlungen ausschließlich LIEST, nie
+    # verändert (siehe Auftrag "Mitbewerber darf Fit nicht verändern").
+    # Verwendet dieselben bereits gecrawlten Seiten (crawl_pages) wie die
+    # DIRS21-Erkennung weiter oben - löst keine zusätzlichen Web-Requests aus.
+    _report(progress_callback, "Mitbewerber wird geprüft")
+    try:
+        competitor_detection = detect_competitor(crawl_pages or {})
+    except Exception as exc:
+        competitor_detection = dict(EMPTY_COMPETITOR_DETECTION)
+        pruefhinweise.append(f"Mitbewerber-Erkennung fehlgeschlagen: {exc}")
+
+    row["mitbewerber"] = competitor_detection["mitbewerber_hauptanbieter"]
+    row["mitbewerber_typ"] = competitor_detection["mitbewerber_typ"]
+    row["mitbewerber_erkennungssicherheit"] = competitor_detection["mitbewerber_erkennungssicherheit"]
+    row["dirs21_koexistenz"] = competitor_detection["dirs21_koexistenz"]
+    row["ibe_anbieter"] = competitor_detection["mitbewerber_ibe"]
+    row["pms_anbieter"] = competitor_detection["mitbewerber_pms"]
+    row["channelmanager_anbieter"] = competitor_detection["mitbewerber_channelmanager"]
+    row["mitbewerber_ibe_sicherheit"] = competitor_detection["mitbewerber_ibe_sicherheit"]
+    row["mitbewerber_pms_sicherheit"] = competitor_detection["mitbewerber_pms_sicherheit"]
+    row["mitbewerber_channelmanager_sicherheit"] = competitor_detection["mitbewerber_channelmanager_sicherheit"]
+    row["mitbewerber_erkennungsquelle"] = competitor_detection["mitbewerber_erkennungsquelle"]
+    row["mitbewerber_technische_evidenz"] = competitor_detection["mitbewerber_technische_evidenz"]
+    if competitor_detection.get("pruefhinweis_mitbewerber"):
+        pruefhinweise.append(competitor_detection["pruefhinweis_mitbewerber"])
+
+    try:
+        comparison = build_comparison(row, competitor_detection, canonical)
+    except Exception as exc:
+        comparison = dict(EMPTY_COMPARISON)
+        pruefhinweise.append(f"Competitive-Gap-Analyse fehlgeschlagen: {exc}")
+
+    row["staerkstes_dirs21_potenzial"] = comparison["staerkstes_dirs21_potenzial"]
+    row["staerkstes_dirs21_potenzial_fit"] = comparison["staerkstes_dirs21_potenzial_fit"]
+    row["staerkstes_differenzierungspotenzial"] = comparison["staerkstes_differenzierungspotenzial"]
+    row["staerkstes_differenzierungspotenzial_score"] = comparison["staerkstes_differenzierungspotenzial_score"]
+    row["competitive_gap"] = comparison["competitive_gap"]
+    row["neukunden_prioritaet"] = comparison["neukunden_prioritaet"]
+    row["mitbewerber_produktmatrix"] = comparison.get("produktmatrix", [])
 
     if canonical == "kunde" and dirs21_id and not row["dirs21_direktbuchung_erkannt"]:
         pruefhinweise.append(
