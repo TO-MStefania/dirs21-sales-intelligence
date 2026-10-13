@@ -298,3 +298,98 @@ def export_workbook_bytes(
             )
     buffer.seek(0)
     return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Getrennte Bestandskunden-/Neukunden-Excel-Exporte (siehe Auftrag
+# "Bestandskunden/Neukunden trennen", Abschnitt 14/42/43). Beide Bereiche
+# erhalten eine EIGENE Excel-Datei mit eigenem Spaltensatz (siehe
+# logic/pipeline_bestandskunden.py bzw. logic/pipeline_neukunden.py) -
+# KEINE Vermischung mit export_to_excel_bytes()/export_workbook_bytes()
+# oben, die weiterhin unverändert von analyze.py und der Routenplanung
+# verwendet werden.
+#
+# Formatierungsregel (siehe Auftrag Abschnitt 43 - gilt für ALLE neuen
+# Score-/Prioritäts-/Gap-Spalten, namensbasiert statt für jede Pipeline
+# einzeln neu zu definieren):
+#   *_prioritaet                        -> GESAMTPRIORITAET_STYLES (A-D)
+#   mitbewerber_erkennungssicherheit     -> MITBEWERBER_SICHERHEIT_STYLES
+#   dirs21_koexistenz                    -> DIRS21_KOEXISTENZ_STYLES
+#   competitive_gap                      -> COMPETITIVE_GAP_STYLES
+#   *_score / *_fit                      -> FIT_BAND_STYLES (0-100, dieselben
+#                                            Schwellen wie im bestehenden
+#                                            Sales-Intelligence-Export)
+# ---------------------------------------------------------------------------
+def _generic_style_for_column(column: str, value):
+    if column.endswith("_prioritaet"):
+        return GESAMTPRIORITAET_STYLES.get(str(value).strip())
+    if column == "mitbewerber_erkennungssicherheit":
+        return MITBEWERBER_SICHERHEIT_STYLES.get(str(value).strip())
+    if column == "dirs21_koexistenz":
+        return DIRS21_KOEXISTENZ_STYLES.get(str(value).strip())
+    if column == "competitive_gap":
+        return COMPETITIVE_GAP_STYLES.get(str(value).strip())
+    if column.endswith("_score") or column.endswith("_fit"):
+        try:
+            return FIT_BAND_STYLES.get(fit_band(float(value)))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _format_scored_sheet(worksheet, df: pd.DataFrame) -> None:
+    """Formatiert ein Tabellenblatt generisch anhand der Spaltennamen (siehe
+    _generic_style_for_column) - wird von den Bestandskunden-/Neukunden-
+    Exporten gemeinsam verwendet, damit neue Score-/Prioritätsspalten nicht
+    für jede Pipeline erneut einzeln eingefärbt werden müssen."""
+    columns = list(df.columns)
+    column_letters = {column: get_column_letter(idx + 1) for idx, column in enumerate(columns)}
+    last_row = worksheet.max_row
+
+    for cell in worksheet[1]:
+        cell.font = HEADER_FONT
+        cell.alignment = UNIFORM_ALIGNMENT
+
+    wrap_columns = {"pruefhinweis", "gefundene_merkmale", "verkaufsmodus"}
+    for row_idx in range(2, last_row + 1):
+        for column in columns:
+            cell = worksheet[f"{column_letters[column]}{row_idx}"]
+            cell.alignment = WRAP_ALIGNMENT if column in wrap_columns else UNIFORM_ALIGNMENT
+
+            style = _generic_style_for_column(column, cell.value)
+            if style:
+                fill_color, font_color = style
+                cell.fill = PatternFill("solid", fgColor=fill_color)
+                cell.font = Font(bold=column.endswith("_prioritaet"), color=font_color)
+            elif column == "pruefhinweis" and cell.value not in (None, ""):
+                cell.fill = PatternFill("solid", fgColor=PRUEFHINWEIS_FILL)
+
+    _apply_column_widths(worksheet, columns, column_letters)
+    worksheet.auto_filter.ref = worksheet.dimensions
+    worksheet.freeze_panes = "A2"
+
+
+def export_bestandskunden_excel_bytes(df: pd.DataFrame) -> bytes:
+    """Eigener Bestandskunden-Excel-Export (siehe Auftrag Abschnitt 14) -
+    KEINE Mitbewerberfelder (siehe logic/pipeline_bestandskunden.
+    RESULT_COLUMNS_BESTANDSKUNDEN, das diese Spalten gar nicht erst enthält)."""
+    buffer = io.BytesIO()
+    sheet_name = "Bestandskunden"
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        _format_scored_sheet(writer.sheets[sheet_name], df)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def export_neukunden_excel_bytes(df: pd.DataFrame) -> bytes:
+    """Eigener Neukunden-Excel-Export (siehe Auftrag Abschnitt 42) - KEINE
+    DIRS21-Nutzungsfelder (siehe logic/pipeline_neukunden.
+    RESULT_COLUMNS_NEUKUNDEN, das diese Spalten gar nicht erst enthält)."""
+    buffer = io.BytesIO()
+    sheet_name = "Neukunden"
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        _format_scored_sheet(writer.sheets[sheet_name], df)
+    buffer.seek(0)
+    return buffer.getvalue()

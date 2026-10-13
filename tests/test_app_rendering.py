@@ -1,9 +1,12 @@
 """
-Rendering-Regressionstests für app.py über Streamlits AppTest-Framework
-(kein echter Browser nötig).
+Rendering-Regressionstests für den Reiter "Bestandskunden" (ui/bestandskunden_tab.py)
+über Streamlits AppTest-Framework (kein echter Browser nötig).
 
-Fall D aus dem Auftrag: 5 Unternehmen analysieren -> KPI-Dashboard, Filter,
-Ergebnistabelle und Excel-Download werden vollständig gerendert, auch wenn
+MIGRATION (siehe Auftrag "Bestandskunden/Neukunden trennen"): ursprünglich
+"Fall D" für die alte, gemeinsame Sales-Intelligence-Tabelle (app.py) - jetzt
+am strukturell entsprechenden Bestandskunden-Reiter nachgebildet: 5
+Unternehmen analysieren -> KPI-Dashboard, Filter, Ergebnistabelle,
+Detailansicht und Excel-Download werden vollständig gerendert, auch wenn
 einzelne Unternehmen fehlerhafte/leere Werte haben (z.B. ein Analysefehler
 oder keine gefundene Zimmeranzahl).
 
@@ -20,9 +23,11 @@ SCRIPT = """
 import pandas as pd
 import streamlit as st
 
-import app as app_module
+from logic.pipeline_bestandskunden import APP_COLUMNS_BESTANDSKUNDEN
+from ui.bestandskunden_tab import render_bestandskunden_tab
+from ui.shared import load_config
 
-base = {col: "" for col in app_module.RESULT_COLUMNS}
+base = {col: "" for col in APP_COLUMNS_BESTANDSKUNDEN}
 
 rows = [
     {**base,
@@ -32,64 +37,54 @@ rows = [
         "dirs21_plus_erkannt": False, "dirs21_mice_erkannt": False,
         "dirs21_erkennungssicherheit": "hoch",
         "plus_fit_score": 80, "gutscheinshop_fit_score": 30, "mice_fit_score": 20,
-        "event_assistent_fit_score": 10, "fachliche_top_empfehlung": "PLUS",
-        "fachliche_top_empfehlung_score": 80, "vertriebliche_prioritaetsaktion": "PLUS als Cross-Selling pruefen",
-        "gesamtprioritaet": "A", "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
+        "event_assistent_fit_score": 10, "top_cross_selling": "PLUS",
+        "top_cross_selling_fit": 80, "bestandskunden_score": 85,
+        "bestandskunden_prioritaet": "A", "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
     },
     {**base,
         "hotel_name": "Hotel Zwei", "website": "zwei.de", "ort": "Lindau", "zimmeranzahl": "",
-        "adressgruppe": "Neukunde", "crm_status": "Neukunde",
-        "fachliche_top_empfehlung": "MICE", "fachliche_top_empfehlung_score": 55,
-        "mice_fit_score": 55, "gesamtprioritaet": "B", "pruefhinweis": "", "crawler_status": "ok",
-        "analyse_datum": "x",
+        "adressgruppe": "Kunde", "crm_status": "Kunde (Bestandskunde)",
+        "top_cross_selling": "MICE", "top_cross_selling_fit": 55,
+        "mice_fit_score": 55, "bestandskunden_score": 60, "bestandskunden_prioritaet": "B",
+        "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
     },
     {**base,
         "hotel_name": "Hotel Drei", "website": "drei.de", "ort": "Meersburg", "zimmeranzahl": "18",
-        "adressgruppe": "Akquise", "crm_status": "Akquise",
-        "fachliche_top_empfehlung": "Gutscheinshop", "fachliche_top_empfehlung_score": 35,
-        "gesamtprioritaet": "C", "pruefhinweis": "Adressgruppe leer/unbekannt - manuelle Pruefung.",
+        "adressgruppe": "Kunde", "crm_status": "Kunde (Bestandskunde)",
+        "top_cross_selling": "Gutscheinshop", "top_cross_selling_fit": 35,
+        "bestandskunden_score": 40, "bestandskunden_prioritaet": "C",
+        "pruefhinweis": "Adressgruppe leer/unbekannt - manuelle Pruefung.",
         "crawler_status": "ok", "analyse_datum": "x",
     },
     {**base,
         "hotel_name": "Hotel Vier", "website": "vier.de", "ort": "Friedrichshafen", "zimmeranzahl": "",
-        "adressgruppe": "ehemaliger Kunde", "crm_status": "Ehemaliger Kunde",
-        "fachliche_top_empfehlung": "Keine klare Zusatzmodul-Empfehlung", "fachliche_top_empfehlung_score": 0,
-        "gesamtprioritaet": "D", "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
+        "adressgruppe": "ehemaliger Kunde",
+        "top_cross_selling": "Keine klare Cross-Selling-Empfehlung", "top_cross_selling_fit": 0,
+        "bestandskunden_score": 10, "bestandskunden_prioritaet": "D",
+        "pruefhinweis": "", "crawler_status": "ok", "analyse_datum": "x",
     },
     {**base,
         "hotel_name": "Hotel Fuenf (Fehlerfall)", "website": "fuenf.de",
+        "top_cross_selling": "Keine klare Cross-Selling-Empfehlung", "top_cross_selling_fit": 0,
+        "bestandskunden_score": 0, "bestandskunden_prioritaet": "D",
         "pruefhinweis": "Analyse fehlgeschlagen - manuelle Pruefung noetig.",
         "crawler_status": "Fehler bei Analyse: timeout", "analyse_datum": "x",
     },
 ]
 
-st.session_state["analyzed_companies"] = [
+st.session_state["bestand_input_df"] = [
     {"hotel_name": r["hotel_name"], "website": r["website"]} for r in rows
 ]
-st.session_state["result_rows"] = rows
+st.session_state["bestand_results_df"] = rows
 
-config = app_module.load_config()
-full_df = pd.DataFrame(st.session_state["result_rows"], columns=app_module.RESULT_COLUMNS)
-full_df = app_module._ensure_columns(full_df, app_module.RESULT_COLUMNS)
-st.success(f"{len(full_df)} Unternehmen analysiert.")
-
-app_module.render_kpi_dashboard(full_df)
-filters = app_module.render_filters(full_df)
-filtered = app_module.apply_filters(full_df, filters)
-sorted_df = app_module.apply_sort(filtered, "standard")
-app_module.render_result_table(sorted_df)
-
-for idx, row in sorted_df.iterrows():
-    app_module.render_detail(idx, row, config)
-
-excel_bytes = app_module.export_to_excel_bytes(full_df)
-st.download_button("Ergebnis als Excel herunterladen", data=excel_bytes, file_name="test.xlsx")
+config = load_config()
+render_bestandskunden_tab(config)
 
 st.write("RENDER_COMPLETE")
 """
 
 
-class TestFallDFuenfUnternehmenVollstaendigesRendering(unittest.TestCase):
+class TestFallDFuenfBestandskundenVollstaendigesRendering(unittest.TestCase):
     def setUp(self):
         self.script_path = os.path.join(os.path.dirname(__file__), "_tmp_apptest_script.py")
         with open(self.script_path, "w", encoding="utf-8") as f:
@@ -108,7 +103,7 @@ class TestFallDFuenfUnternehmenVollstaendigesRendering(unittest.TestCase):
         texts = [m.value for m in at.markdown] + [m.value for m in at.text]
         self.assertTrue(any("RENDER_COMPLETE" in str(t) for t in texts))
 
-        # KPI-Dashboard: 6 Karten, u.a. "5" analysierte Unternehmen
+        # KPI-Dashboard: u.a. "5" analysierte Bestandskunden
         kpi_values = [m.value for m in at.markdown if m.value.strip().startswith("###")]
         self.assertIn("### 5", kpi_values)
 
@@ -120,7 +115,7 @@ class TestFallDFuenfUnternehmenVollstaendigesRendering(unittest.TestCase):
         self.assertGreaterEqual(len(at.expander), 5)
 
         # Excel-Download-Button vorhanden
-        self.assertTrue(any(b.label == "Ergebnis als Excel herunterladen" for b in at.download_button))
+        self.assertTrue(any(b.label == "Bestandskunden-Ergebnis herunterladen" for b in at.download_button))
 
 
 if __name__ == "__main__":

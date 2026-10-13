@@ -21,6 +21,13 @@
 #                           ("nicht auf öffentlicher Partnerliste gefunden"
 #                           ist NICHT gleich "existiert technisch nicht" -
 #                           siehe Auftrag Abschnitt 16)
+#   sales_relevance      - { focus_competitor: true|false } - markiert
+#                           Anbieter, die im Vertrieb besonders häufig
+#                           relevant sind (siehe Auftrag "Neukunden"
+#                           Abschnitt 19/28). Darf den Neukunden-Score nur
+#                           MODERAT positiv beeinflussen (siehe
+#                           logic/scoring_neukunden.py) - niemals allein
+#                           Priorität A erzeugen.
 #   capabilities         - Capability-Matrix je DIRS21-Vergleichsdimension,
 #                           NUR kontrollierte Werte (yes|partial|no|unknown je
 #                           status, siehe Auftrag "Competitive Gap Analysis").
@@ -58,6 +65,8 @@ providers:
     kundentypen: "Kleinere bis mittlere unabhängige Hotels"
     anbieter_domain: "onepagebooking.com"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: true
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -84,6 +93,8 @@ providers:
     kundentypen: "Hotels aller Größen, international verbreitet"
     anbieter_domain: "siteminder.com"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: true
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -110,6 +121,8 @@ providers:
     kundentypen: "Unabhängige Hotels und kleinere Hotelketten"
     anbieter_domain: "hotel-spider.com"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -133,6 +146,8 @@ providers:
     kundentypen: "Hotels aller Größen, auch Hostels/Apartments"
     anbieter_domain: "mews.com"
     dirs21_coexistence: "ja"
+    sales_relevance:
+      focus_competitor: true
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -157,6 +172,8 @@ providers:
     kundentypen: "Kleinere bis mittlere Hotels/Gasthöfe (DACH-Raum)"
     anbieter_domain: "softtec.software"
     dirs21_coexistence: "ja"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -183,6 +200,8 @@ providers:
     kundentypen: "Kleinere bis mittlere Hotels (v.a. Alpenraum)"
     anbieter_domain: "easy-booking.at"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -210,6 +229,8 @@ providers:
     kundentypen: "Kleinere bis mittlere, unabhängige Hotels"
     anbieter_domain: "roomraccoon.com"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -234,6 +255,8 @@ providers:
     kundentypen: "Hotels im DACH-Raum"
     anbieter_domain: "casablanca.at"
     dirs21_coexistence: "ja"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -257,6 +280,8 @@ providers:
     kundentypen: "Hotels und Hotelgruppen"
     anbieter_domain: "guestline.com"
     dirs21_coexistence: "ja"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -282,6 +307,8 @@ providers:
     kundentypen: "Hotels im DACH-Raum"
     anbieter_domain: "viatocrs.de"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: true
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -306,6 +333,8 @@ providers:
     kundentypen: "Hotels im DACH-Raum"
     anbieter_domain: "viomassl.com"
     dirs21_coexistence: "ja"
+    sales_relevance:
+      focus_competitor: true
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -333,6 +362,8 @@ providers:
     kundentypen: "Kleinere bis mittlere, unabhängige Hotels"
     anbieter_domain: "direct-reservation.net"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: false
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}
@@ -357,6 +388,8 @@ providers:
     kundentypen: "Hotels aller Größen (v.a. DACH-Raum)"
     anbieter_domain: "seekda.com"
     dirs21_coexistence: "nicht bestätigt"
+    sales_relevance:
+      focus_competitor: true
     capabilities:
       booking_engine: {status: "yes"}
       channel_manager: {status: "yes"}

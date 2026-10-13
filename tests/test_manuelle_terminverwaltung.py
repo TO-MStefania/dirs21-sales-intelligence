@@ -90,20 +90,20 @@ class TestFall3DirsIdWirdUebernommen(unittest.TestCase):
     def test_auswahl_befuellt_adresse_und_dirs21_id_bleibt_abrufbar(self):
         script = """
 import streamlit as st
-import app as app_module
+from ui import routenplanung_tab
 
-st.session_state["analyzed_companies"] = [
+st.session_state["bestand_input_df"] = [
     {"hotel_name": "Hotel Mit ID", "website": "mit-id.de", "strasse": "Hauptstr. 9", "plz": "88045"},
 ]
-st.session_state["result_rows"] = [
+st.session_state["bestand_results_df"] = [
     {"hotel_name": "Hotel Mit ID", "dirs21_id": "DIRS-42", "ort": "Friedrichshafen",
-     "gesamtprioritaet": "A", "fachliche_top_empfehlung": "MICE"},
+     "bestandskunden_prioritaet": "A", "top_cross_selling": "MICE"},
 ]
 
-optionen = app_module._sales_company_options()
+optionen = routenplanung_tab._company_optionen_fuer_routenplanung("bestandskunden")
 st.session_state["_route_form_optionen"] = optionen
 st.session_state["route_form_unternehmen"] = "Hotel Mit ID"
-app_module._on_route_form_company_change()
+routenplanung_tab._on_route_form_company_change()
 
 passendes = next(o for o in optionen if o["hotel_name"] == "Hotel Mit ID")
 st.write(f"DIRS_ID={passendes['dirs21_id']}")
@@ -222,9 +222,9 @@ class TestFall8ExcelExportDreiGetrennteSheets(unittest.TestCase):
     Routen-Ergebnis als getrennte Tabellenblätter."""
 
     def test_workbook_enthaelt_alle_drei_sheets(self):
-        import app as app_module
         from logic.exporter import export_workbook_bytes
         from logic.pipeline import RESULT_COLUMNS
+        from ui import routenplanung_tab
 
         alle_termine = [
             build_termin("Hotel A", "Teststr. 1", "00000", "Ort A", dt.date(2026, 10, 15), dt.time(9, 0)),
@@ -234,8 +234,8 @@ class TestFall8ExcelExportDreiGetrennteSheets(unittest.TestCase):
             geocode_fn=geocode_fn, travel_fn=travel_fn_60kmh, start_zeit=dt.time(8, 0), geocode_cache={},
         )
         sales_df = pd.DataFrame(columns=RESULT_COLUMNS)
-        route_input_df = app_module._route_input_dataframe(alle_termine)
-        route_ergebnis_df = app_module._route_ergebnis_dataframe(route)
+        route_input_df = routenplanung_tab._route_input_dataframe(alle_termine)
+        route_ergebnis_df = routenplanung_tab._route_ergebnis_dataframe(route)
 
         workbook_bytes = export_workbook_bytes(sales_df, route_input_df, route_ergebnis_df)
         workbook = openpyxl.load_workbook(io.BytesIO(workbook_bytes))
@@ -255,10 +255,11 @@ class TestFall1KeinRoutenplanungSheetStartetNormal(unittest.TestCase):
 
     def test_tab_ohne_hochgeladene_datei_zeigt_hinweis_kein_fehler(self):
         script = """
-import app as app_module
+from ui.routenplanung_tab import render_routenplanung_tab
+from ui.shared import load_config
 
-config = app_module.load_config()
-app_module.render_routenplanung_tab(config, None)
+config = load_config()
+render_routenplanung_tab(config, None)
 import streamlit as st
 st.write("RENDER_COMPLETE")
 """
@@ -304,14 +305,15 @@ class TestFall9und10OptionalerSheetImport(unittest.TestCase):
         with open(script_path, "wb") as f:
             f.write(uploaded_bytes)
         script = f"""
-import app as app_module
+from ui.routenplanung_tab import render_routenplanung_tab
+from ui.shared import load_config
 import streamlit as st
 
 with open(r"{script_path}", "rb") as f:
     uploaded_bytes = f.read()
 
-config = app_module.load_config()
-app_module.render_routenplanung_tab(config, uploaded_bytes)
+config = load_config()
+render_routenplanung_tab(config, uploaded_bytes)
 st.write(f"ANZAHL_TERMINE={{len(st.session_state.get('route_termine', []))}}")
 st.write("RENDER_COMPLETE")
 """
@@ -355,9 +357,10 @@ class TestTerminHinzufuegenUndBearbeitenUeberEchteWidgets(unittest.TestCase):
         self.path = os.path.join(os.path.dirname(__file__), "_tmp_widget_flow.py")
         with open(self.path, "w", encoding="utf-8") as f:
             f.write(
-                "import app as app_module\n"
-                "config = app_module.load_config()\n"
-                "app_module.render_routenplanung_tab(config, None)\n"
+                "from ui.routenplanung_tab import render_routenplanung_tab\n"
+                "from ui.shared import load_config\n"
+                "config = load_config()\n"
+                "render_routenplanung_tab(config, None)\n"
             )
 
     def tearDown(self):

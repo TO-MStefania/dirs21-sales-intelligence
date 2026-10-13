@@ -1,10 +1,15 @@
 """
 Regressionstests zum KeyError-Fix für "zimmeranzahl" (und optionale Spalten
-allgemein) in app.py.
+allgemein).
 
-Testet ausschließlich die reinen, nicht von einer laufenden Streamlit-Session
-abhängigen Funktionen (_ensure_columns, _safe_series) sowie die
-Pipeline-Garantie, dass jedes Ergebnis-Dictionary "zimmeranzahl" enthält.
+MIGRATION (siehe Auftrag "Bestandskunden/Neukunden trennen"): app.py ist
+jetzt reine Verdrahtung (siehe app.py-Moduldocstring) - die generischen
+Hilfsfunktionen _ensure_columns/_safe_series leben jetzt in ui/shared.py
+(ensure_columns/safe_series), die kompakten Spaltenlisten (PREVIEW_COLUMNS/
+COMPACT_COLUMNS/FIT_SCORE_COLUMNS) in ui/bestandskunden_tab.py. Die
+ursprüngliche logic/pipeline.py (weiterhin vom CLI-Tool analyze.py genutzt)
+und ihre Tests bleiben unverändert.
+
 Das vollständige Rendering (KPI-Dashboard, Filter, Tabelle, Detailansicht)
 wird in tests/test_app_rendering.py über Streamlits AppTest abgedeckt.
 
@@ -17,8 +22,10 @@ import unittest
 import pandas as pd
 import yaml
 
-import app
 from logic import pipeline
+from logic.exporter import export_to_excel_bytes
+from ui import bestandskunden_tab
+from ui.shared import ensure_columns, safe_series
 
 
 def _fake_crawl(pages):
@@ -35,18 +42,18 @@ def _fake_crawl(pages):
 class TestEnsureColumns(unittest.TestCase):
     def test_fehlende_spalte_wird_leer_ergaenzt(self):
         df = pd.DataFrame([{"hotel_name": "A"}, {"hotel_name": "B"}])
-        result = app._ensure_columns(df, ["hotel_name", "zimmeranzahl", "gesamtprioritaet"])
+        result = ensure_columns(df, ["hotel_name", "zimmeranzahl", "bestandskunden_prioritaet"])
         self.assertIn("zimmeranzahl", result.columns)
         self.assertTrue((result["zimmeranzahl"] == "").all())
 
     def test_vorhandene_spalte_bleibt_unveraendert(self):
         df = pd.DataFrame([{"hotel_name": "A", "zimmeranzahl": "42"}])
-        result = app._ensure_columns(df, ["hotel_name", "zimmeranzahl"])
+        result = ensure_columns(df, ["hotel_name", "zimmeranzahl"])
         self.assertEqual(result.loc[0, "zimmeranzahl"], "42")
 
     def test_leeres_dataframe_bleibt_leer_aber_mit_spalten(self):
         df = pd.DataFrame([], columns=["hotel_name"])
-        result = app._ensure_columns(df, ["hotel_name", "zimmeranzahl"])
+        result = ensure_columns(df, ["hotel_name", "zimmeranzahl"])
         self.assertIn("zimmeranzahl", result.columns)
         self.assertEqual(len(result), 0)
 
@@ -54,35 +61,19 @@ class TestEnsureColumns(unittest.TestCase):
 class TestSafeSeries(unittest.TestCase):
     def test_liefert_spalte_wenn_vorhanden(self):
         df = pd.DataFrame([{"zimmeranzahl": "10"}])
-        self.assertEqual(list(app._safe_series(df, "zimmeranzahl")), ["10"])
+        self.assertEqual(list(safe_series(df, "zimmeranzahl")), ["10"])
 
     def test_liefert_leere_ersatzspalte_wenn_spalte_fehlt(self):
         df = pd.DataFrame([{"hotel_name": "A"}, {"hotel_name": "B"}])
-        series = app._safe_series(df, "zimmeranzahl")
+        series = safe_series(df, "zimmeranzahl")
         self.assertEqual(len(series), 2)
         self.assertTrue((series == "").all())
 
 
-class TestKpiDashboardRobustGegenFehlendeSpalte(unittest.TestCase):
-    """Fall C: Ein DataFrame ohne 'zimmeranzahl' (z.B. aus einer älteren
-    Session/Version) darf render_kpi_dashboard nicht mit einem KeyError
-    abbrechen lassen."""
-
-    def test_render_kpi_dashboard_ohne_zimmeranzahl_wirft_keinen_keyerror(self):
-        legacy_df = pd.DataFrame([
-            {"hotel_name": "A", "gesamtprioritaet": "A", "fachliche_top_empfehlung_score": 80},
-            {"hotel_name": "B", "gesamtprioritaet": "B", "fachliche_top_empfehlung_score": 50},
-        ])
-        self.assertNotIn("zimmeranzahl", legacy_df.columns)
-        try:
-            app.render_kpi_dashboard(legacy_df)
-        except KeyError as exc:
-            self.fail(f"render_kpi_dashboard hat trotz fehlender Spalte einen KeyError geworfen: {exc}")
-
-
 class TestPipelineZimmeranzahlImmerVorhanden(unittest.TestCase):
-    """Fall A/B: logic/pipeline.py muss 'zimmeranzahl' in JEDEM
-    Ergebnis-Dictionary anlegen - gefunden oder leer, nie fehlend."""
+    """Fall A/B: logic/pipeline.py (CLI-Pipeline, unverändert) muss
+    'zimmeranzahl' in JEDEM Ergebnis-Dictionary anlegen - gefunden oder leer,
+    nie fehlend."""
 
     def setUp(self):
         with open("config.yaml", "r", encoding="utf-8") as f:
@@ -120,41 +111,44 @@ class TestPipelineZimmeranzahlImmerVorhanden(unittest.TestCase):
         self.assertIn("zimmeranzahl", pipeline.RESULT_COLUMNS)
 
 
-class TestInsightsUndDirs21IdInResultColumns(unittest.TestCase):
+class TestInsightsUndDirs21IdInBestandskundenSpalten(unittest.TestCase):
     """Fall 10 (DIRS21-ID sichtbar, kein Score-Effekt) sowie die Insights-
-    Produktpalette: insights_fit_score muss wie die übrigen Fit-Scores Teil
-    von RESULT_COLUMNS (Excel-Export/CLI) sein, DIRS21-ID muss in der
-    Webapp-Vorschau und der kompakten Ergebnistabelle sichtbar sein. Die
-    kurzen Fit-Begründungen (nur für die Detailansicht) dürfen dagegen NICHT
-    in RESULT_COLUMNS landen, damit sie nie im Excel-Export auftauchen."""
+    Produktpalette - jetzt am Bestandskunden-Spaltensatz geprüft (siehe
+    logic/pipeline_bestandskunden.py, ui/bestandskunden_tab.py). Die kurzen
+    Fit-Begründungen (nur für die Detailansicht) dürfen NICHT in
+    RESULT_COLUMNS_BESTANDSKUNDEN landen, damit sie nie im Excel-Export
+    auftauchen."""
 
-    def test_insights_fit_score_in_result_columns(self):
-        self.assertIn("insights_fit_score", pipeline.RESULT_COLUMNS)
+    def test_insights_fit_score_in_result_columns_bestandskunden(self):
+        from logic.pipeline_bestandskunden import RESULT_COLUMNS_BESTANDSKUNDEN
+        self.assertIn("insights_fit_score", RESULT_COLUMNS_BESTANDSKUNDEN)
 
-    def test_kein_dirs21_insights_erkannt_feld(self):
-        self.assertNotIn("dirs21_insights_erkannt", pipeline.RESULT_COLUMNS)
-
-    def test_fit_begruendung_spalten_nicht_in_result_columns(self):
-        for col in pipeline.FIT_BEGRUENDUNG_COLUMNS:
-            self.assertNotIn(col, pipeline.RESULT_COLUMNS)
+    def test_fit_begruendung_spalten_nicht_in_result_columns_bestandskunden(self):
+        from logic.pipeline_bestandskunden import DETAIL_COLUMNS_BESTANDSKUNDEN, RESULT_COLUMNS_BESTANDSKUNDEN
+        begruendung_cols = [c for c in DETAIL_COLUMNS_BESTANDSKUNDEN if c.endswith("_begruendung")]
+        self.assertTrue(begruendung_cols)
+        for col in begruendung_cols:
+            self.assertNotIn(col, RESULT_COLUMNS_BESTANDSKUNDEN)
 
     def test_dirs21_id_in_vorschau_sichtbar(self):
-        self.assertIn("dirs21_id", app.PREVIEW_COLUMNS)
+        self.assertIn("dirs21_id", bestandskunden_tab.PREVIEW_COLUMNS)
 
     def test_dirs21_id_in_kompakter_ergebnistabelle_sichtbar(self):
-        self.assertIn("dirs21_id", app.COMPACT_COLUMNS)
+        self.assertIn("dirs21_id", bestandskunden_tab.COMPACT_COLUMNS)
 
     def test_insights_in_fit_score_spalten_der_detailansicht(self):
-        self.assertIn("insights_fit_score", app.FIT_SCORE_COLUMNS)
+        self.assertIn("insights_fit_score", bestandskunden_tab.FIT_SCORE_COLUMNS)
 
     def test_excel_export_enthaelt_keine_fit_begruendungsspalten(self):
-        row = {col: "" for col in pipeline.RESULT_COLUMNS}
+        from logic.pipeline_bestandskunden import DETAIL_COLUMNS_BESTANDSKUNDEN, RESULT_COLUMNS_BESTANDSKUNDEN
+        row = {col: "" for col in RESULT_COLUMNS_BESTANDSKUNDEN}
         row["hotel_name"] = "Test"
-        df = pd.DataFrame([row], columns=pipeline.RESULT_COLUMNS)
-        excel_bytes = app.export_to_excel_bytes(df)
+        df = pd.DataFrame([row], columns=RESULT_COLUMNS_BESTANDSKUNDEN)
+        excel_bytes = export_to_excel_bytes(df)
         self.assertTrue(len(excel_bytes) > 0)
         read_back = pd.read_excel(pd.io.common.BytesIO(excel_bytes))
-        for col in pipeline.FIT_BEGRUENDUNG_COLUMNS:
+        begruendung_cols = [c for c in DETAIL_COLUMNS_BESTANDSKUNDEN if c.endswith("_begruendung")]
+        for col in begruendung_cols:
             self.assertNotIn(col, read_back.columns)
         self.assertIn("insights_fit_score", read_back.columns)
 

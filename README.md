@@ -109,56 +109,58 @@ Hinweise für Windows:
 
 ## Streamlit-Webapp (app.py, Excel-Upload)
 
-Browser-Oberfläche für dieselbe Analyse - ohne HubSpot-API, ohne Secrets.
-Die HubSpot-Excel-Datei wird direkt im Browser hochgeladen, nicht vorher in
-einen Ordner gelegt.
+Browser-Oberfläche - ohne HubSpot-API, ohne Secrets. Seit der fachlichen
+Trennung in **Bestandskunden** und **Neukunden** (siehe Auftrag
+"Bestandskunden/Neukunden trennen") besitzt die App **drei eigenständige
+Reiter**, jeder mit **eigenem Excel-Upload**, **eigenem Analyse-Button**,
+**eigenem Session-State** und **eigenem Excel-Export** - es muss NICHT
+dieselbe Excel-Datei für mehrere Bereiche verwendet werden:
+
+| Reiter | Zentrale Frage | Pipeline/Scoring |
+|---|---|---|
+| **Bestandskunden** | Welche zusätzlichen DIRS21-Produkte besitzen bei diesem bestehenden Kunden echtes Cross-Selling-Potenzial? | `logic/pipeline_bestandskunden.py`, `logic/scoring_bestandskunden.py` |
+| **Neukunden** | Wie attraktiv ist dieses Unternehmen insgesamt für DIRS21 und welche Potenziale bestehen gegenüber der aktuellen Systemlandschaft? | `logic/pipeline_neukunden.py`, `logic/scoring_neukunden.py` |
+| **Routenplanung** | Tourenplanung für Vor-Ort-Termine (siehe eigener Abschnitt unten) - kann Unternehmen aus Bestandskunden, Neukunden oder beiden Bereichen verwenden | `logic/route_planner.py` (unverändert) |
+
+Beide Analysebereiche verwenden **dieselben gemeinsamen technischen
+Komponenten** (Website-Crawler, Zimmeranzahl-Ermittlung, die zentrale
+Produkt-Fit-Engine für PLUS/Gutscheinshop/MICE/Event-Assistent/Insights,
+DIRS21- und Mitbewerber-Knowledgebase - siehe `logic/pipeline_common.py`),
+werten diese gemeinsamen Rohdaten aber **fachlich unterschiedlich aus** (siehe
+die beiden eigenen Abschnitte weiter unten).
 
 1. Lokal starten:
    ```bash
    pip install -r requirements.txt
    streamlit run app.py
    ```
-2. Im Browser die HubSpot-Excel-Datei (.xlsx) über den Datei-Upload
-   auswählen.
-3. Die App zeigt danach die Anzahl erkannter Unternehmen, die Anzahl mit
-   hinterlegter Website/Domain sowie eine kleine Vorschau der importierten
-   Daten.
-4. Maximale Anzahl zu analysierender Unternehmen wählen (5, 10, 20, 50 oder
-   Alle - Standard: 5) und auf **"Analyse starten"** klicken.
-5. Ein Fortschrittsbalken zeigt den Analysefortschritt mit Position,
-   Unternehmensname und aktuellem Analyseschritt (z.B.
-   `12 / 66 — Hotel XY — Zimmeranzahl wird gesucht`); Fehler bei einzelnen
-   Websites brechen die Analyse nicht ab, sondern werden in
-   `crawler_status` bzw. `pruefhinweis` dokumentiert.
-6. Nach Abschluss erscheinen:
-   - ein **KPI-Dashboard** (analysierte Unternehmen, Priorität A/B-Anzahl,
-     durchschnittlicher Top-Fit-Score, durchschnittliche Zimmeranzahl,
-     Anzahl ohne gefundene Zimmeranzahl),
-   - ein **Filterbereich** (Gesamtpriorität, CRM-Status, Adressgruppe,
-     Top-Empfehlung, Ort, Zimmeranzahl-Bereich, sowie Schnellfilter wie
-     "Nur Priorität A" oder "Manuell prüfen") - wirkt nur auf die Anzeige,
-     löst keine erneute Analyse aus,
-   - eine **Sortierauswahl** (Standard: Gesamtpriorität, dann Top-Fit
-     absteigend; alternativ Hotelname, Ort, Zimmeranzahl, Top-Fit oder
-     Gesamtpriorität),
-   - eine kompakte **Ergebnistabelle** mit Ampelfarben für Fit-Score und
-     Gesamtpriorität (dieselben Farbbänder wie im Excel-Export),
-   - eine aufklappbare **Detailansicht pro Unternehmen** mit allen übrigen
-     Feldern, klar getrennt in "bereits technisch erkannte DIRS21-Produkte"
-     und "fachliche Potenziale (Fit-Scores)", sowie einem Button
-     **"🔄 Unternehmen erneut analysieren"**, der nur dieses eine
-     Unternehmen neu crawlt (Website, DIRS21-Erkennung, Zimmeranzahl,
-     Fit-Scores, Vertriebsaktion, Prüfhinweise) - alle anderen Zeilen
-     bleiben unverändert,
-   - der Button **"Ergebnis als Excel herunterladen"** (exportiert immer
-     alle analysierten Unternehmen mit allen Spalten, unabhängig von den
-     Filtern),
-   - ein Bereich **"Technische Informationen"** mit der vollständigen,
-     ungefilterten Rohdatentabelle und kurzen Hinweisen zur Erkennungslogik.
+2. Im gewünschten Reiter (**Bestandskunden** oder **Neukunden**) über den
+   dortigen Datei-Upload die passende Excel-Liste hochladen (dieselbe
+   HubSpot-Excel-Exportstruktur wie bisher - Unternehmensname,
+   Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID).
+3. Maximale Anzahl zu analysierender Unternehmen wählen und auf
+   **"Bestandskunden analysieren"** bzw. **"Neukunden analysieren"**
+   klicken - ein Fortschrittsbalken zeigt Position, Unternehmensname und
+   aktuellen Analyseschritt; Fehler bei einzelnen Websites brechen die
+   Analyse nicht ab, sondern werden in `crawler_status`/`pruefhinweis`
+   dokumentiert.
+4. Nach Abschluss erscheinen in beiden Reitern ein KPI-Dashboard, ein
+   Filterbereich, eine kompakte Ergebnistabelle mit Ampelfarben, eine
+   aufklappbare Detailansicht pro Unternehmen (inkl. **"🔄 Unternehmen
+   erneut analysieren"**) sowie der jeweils eigene Excel-Download-Button
+   (**"Bestandskunden-Ergebnis herunterladen"** /
+   **"Neukunden-Ergebnis herunterladen"**) - Details siehe die beiden
+   eigenen Abschnitte unten.
+
+Beide Bereiche sind **vollständig unabhängig**: eine erneute
+Bestandskunden-Analyse überschreibt nie die Neukunden-Ergebnisse (und
+umgekehrt) - jeder Bereich hält seinen eigenen Session-State
+(`bestand_input_df`/`bestand_results_df` bzw.
+`neukunden_input_df`/`neukunden_results_df`, siehe Abschnitt
+"Projektstruktur").
 
 Farben, Abstände, Rundungen und Schriftgrößen sind zentral als CSS-Variablen
-in `app.py` (`DESIGN_CSS`, direkt unter `st.set_page_config`) definiert und
-können dort angepasst werden.
+in `ui/shared.py` (`DESIGN_CSS`) definiert und können dort angepasst werden.
 
 ## Deployment auf Streamlit Community Cloud
 
@@ -185,39 +187,72 @@ abgerufen wird.
 ## Projektstruktur
 
 ```
-analyze.py                      Lokales CLI-Tool: Excel-Import -> Analyse -> Excel-Export
-app.py                           Streamlit-Webapp: Excel-Upload -> Analyse -> Tabelle + Excel-Download
+analyze.py                      Lokales CLI-Tool: Excel-Import -> Analyse -> Excel-Export (unverändert,
+                                    nutzt weiterhin logic/pipeline.py)
+app.py                           Streamlit-Webapp: reine Verdrahtung (Config laden, Design einbinden,
+                                    die drei Reiter aufbauen) - siehe ui/ und logic/ für die eigentliche Logik
 config.yaml                      Spalten-Mapping & Analyse-Einstellungen
 requirements.txt
 .streamlit/secrets.toml.example  Beispiel-Datei (HubSpot-Token, optionaler Search-API-Key - beide ungenutzt
                                      funktioniert die App ganz normal ohne Secrets)
+ui/                              Präsentationsschicht der Webapp (siehe Auftrag "keine riesige app.py")
+  shared.py                        Design-Tokens (DESIGN_CSS), generische Formatierungs-/Hilfsfunktionen -
+                                     gemeinsam von allen drei Reitern genutzt
+  bestandskunden_tab.py            Reiter "Bestandskunden" (Upload, Analyse-Button, KPIs, Filter,
+                                     Ergebnistabelle, Detailansicht, Excel-Download)
+  neukunden_tab.py                 Reiter "Neukunden" (Upload, Analyse-Button, KPIs, Filter,
+                                     Ergebnistabelle, Detailansicht, Excel-Download)
+  routenplanung_tab.py             Reiter "Routenplanung" (unverändert in der Routenlogik selbst; wählbare
+                                     Datenquelle Bestandskunden/Neukunden/beide)
 logic/
   excel_import.py                 Liest HubSpot-Excel-Exporte gemäß config.yaml ein
-  pipeline.py                      Gemeinsame Analyse-Pipeline (von analyze.py und app.py genutzt)
+  pipeline.py                      Ursprüngliche, gemeinsame Analyse-Pipeline - ausschließlich noch von
+                                     analyze.py (CLI) genutzt, UNVERÄNDERT. Die Webapp verwendet seit der
+                                     Bestandskunden-/Neukunden-Trennung stattdessen pipeline_common.py +
+                                     pipeline_bestandskunden.py/pipeline_neukunden.py (siehe unten).
+  pipeline_common.py               Gemeinsame Rohdaten-Pipeline der Webapp: Crawling, DIRS21-Erkennung,
+                                     Zimmeranzahl, EINE zentrale Produkt-Fit-Berechnung (score_all_modules) -
+                                     wird von beiden folgenden Pipelines gelesen, nie dupliziert
+  pipeline_bestandskunden.py        Bestandskunden-Pipeline ("Cross-Selling-Potenzial bei bestehenden
+                                     Kunden") - siehe eigener Abschnitt unten
+  scoring_bestandskunden.py         Bestandskunden-Score/-Priorität (0-100 bzw. A-D), Top-Cross-Selling
+  pipeline_neukunden.py             Neukunden-Pipeline ("Marktpotenzial + Wettbewerbssituation") - siehe
+                                     eigener Abschnitt unten
+  scoring_neukunden.py             Kernpotenzial-/Neukunden-Score, Neukunden-Priorität, Fokus-Mitbewerber-
+                                     Gewichtung - nutzt die Gap-/Capability-Logik aus
+                                     competitor_comparison.py wieder, statt sie zu duplizieren
   website_crawler.py               Öffentliches Crawling der Hotel-Website
   dirs21_detection.py              Erkennung öffentlicher DIRS21-Nutzungs-Hinweise
   room_count_detection.py           Zimmeranzahl-Grundregel: Excel > Website > sparsame Websuche (reine
                                      Zusatzinformation)
   web_search.py                    Optionale, modulare Websuche (nur Stufe 2 der Zimmeranzahl-Recherche)
   status_detection.py              Adressgruppe -> CRM-Status / Statusklasse / Verkaufsmodus
-  scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul
-  recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung
-  exporter.py                      Excel-Export (Ampelformatierung, zentral für analyze.py und app.py;
-                                     export_workbook_bytes() für den Mehrblatt-Export der Routenplanung)
+  scoring.py                       Fachlicher Modul-Fit-Score (0-100) je Zusatzmodul - EINE zentrale
+                                     Implementierung, von Bestandskunden UND Neukunden gemeinsam gelesen
+  recommendations.py                Vertriebliche Handlungsempfehlung & Priorisierung (weiterhin von
+                                     logic/pipeline.py für das CLI-Tool genutzt; liefert außerdem die
+                                     "bereits genutzt"-Zuordnung für logic/scoring_bestandskunden.py)
+  exporter.py                      Excel-Export (Ampelformatierung) - export_to_excel_bytes()/
+                                     export_workbook_bytes() für analyze.py bzw. die Routenplanung,
+                                     export_bestandskunden_excel_bytes()/export_neukunden_excel_bytes()
+                                     für die beiden neuen, getrennten Exporte
   hubspot_client.py                 HubSpot-API-Zugriff (read-only) - aktuell von keinem Einstiegspunkt
                                      genutzt, bleibt für eine mögliche spätere HubSpot-Anbindung erhalten
   route_import.py                  build_termin() für in der Webapp angelegte Termine + optionales Einlesen
                                      eines bereits vorhandenen Tabellenblatts "Routenplanung" (siehe unten)
   route_planner.py                 Tourenplanung: fixe/flexible Termine, kritische Übergänge,
-                                     aktuell-vs-optimiert-Vergleich, Vorschläge entlang der Route
+                                     aktuell-vs-optimiert-Vergleich, Vorschläge entlang der Route -
+                                     fachlich UNVERÄNDERT durch die Bestandskunden-/Neukunden-Trennung
   geocoding.py                     Adresse -> Koordinaten (Nominatim/OpenStreetMap, kein Pflicht-Key)
   routing_provider.py              Fahrzeit-/Distanzmatrix (optionale Routing-API, siehe unten)
-  competitor_detection.py          Rein technische Mitbewerber-Erkennung (siehe knowledge/competitors.yaml)
+  competitor_detection.py          Rein technische Mitbewerber-Erkennung (siehe knowledge/competitors.yaml) -
+                                     von logic/pipeline_neukunden.py genutzt
   competitor_comparison.py          Competitive Gap Analysis: DIRS21-Fit (unverändert) vs. Mitbewerber-
-                                     Capability-Matrix - erzeugt KEINE Vertriebsansätze
+                                     Capability-Matrix - die Gap-/Capability-Bestimmung wird von
+                                     logic/scoring_neukunden.py wiederverwendet
 knowledge/
   competitors.yaml                 Zentrale, erweiterbare Mitbewerber-Knowledgebase (Fingerprints,
-                                     Typ, DIRS21-Koexistenz, Capability-Matrix)
+                                     Typ, DIRS21-Koexistenz, Capability-Matrix, Fokus-Mitbewerber-Flag)
 data/                             Ablageort für Eingabe-Excel-Dateien (nicht versioniert, nur für analyze.py)
 exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert, nur für analyze.py)
 ```
@@ -296,33 +331,50 @@ Streamlit Secrets oder eine Umgebungsvariable setzen (siehe
 wird keine Google-Scraping-Lösung verwendet, sondern eine reguläre,
 dokumentierte Such-API (standardmäßig Bing Web Search v7).
 
-## Routenplanung (zweiter Reiter in app.py)
+## Routenplanung (dritter Reiter in app.py)
 
-Eigenständiger Funktionsbereich neben der Sales-Intelligence-Analyse, für die
-Tagesplanung vereinbarter Vor-Ort-Termine. Termine werden **primär direkt in
+Eigenständiger Funktionsbereich für die Tagesplanung vereinbarter Vor-Ort-
+Termine - **fachlich unverändert** durch die Bestandskunden-/Neukunden-
+Trennung (siehe `logic/route_planner.py`). Termine werden **primär direkt in
 der Webapp** angelegt, bearbeitet und gelöscht - ein eigenes Tabellenblatt in
-der hochgeladenen Excel-Datei ist dafür **nicht erforderlich**:
+einer Excel-Datei ist dafür **nicht erforderlich**:
 
-1. HubSpot-Excel hochladen und im Reiter "Sales Intelligence" analysieren.
-2. Im Reiter "Routenplanung" im Formular "Termin hinzufügen" ein Unternehmen
-   aus der Dropdown-Liste der bereits analysierten Unternehmen auswählen
-   (oder manuell eintragen) - Ort/Straße/PLZ (falls im Export vorhanden),
-   Gesamtpriorität und fachliche Top-Empfehlung werden automatisch
+1. Im Reiter "Bestandskunden" und/oder "Neukunden" eine Analyse durchführen
+   (siehe oben).
+2. Im Reiter "Routenplanung" zunächst die **Datenquelle** wählen
+   (Bestandskunden / Neukunden / Beide) - bestimmt, aus welchen bereits
+   analysierten Unternehmen die Dropdown-Auswahl und die "Passende
+   Unternehmen entlang der Route"-Vorschläge gespeist werden.
+3. Im Formular "Termin hinzufügen" ein Unternehmen aus der Dropdown-Liste
+   auswählen (oder manuell eintragen) - Ort/Straße/PLZ (falls im Export
+   vorhanden), Priorität und Top-Empfehlung/-Potenzial werden automatisch
    übernommen und können ergänzt/korrigiert werden.
-3. Beliebig viele weitere Termine hinzufügen, in der Terminliste bearbeiten
+4. Beliebig viele weitere Termine hinzufügen, in der Terminliste bearbeiten
    oder löschen - die Liste bleibt für die laufende Session erhalten
    (`st.session_state["route_termine"]`), auch wenn die Seite durch Filter
    oder andere Eingaben neu gerendert wird.
-4. Tourdatum, Startadresse und Tourende wählen und auf "Route optimieren"
+5. Tourdatum, Startadresse und Tourende wählen und auf "Route optimieren"
    klicken.
-5. Ergebnis (Kennzahlen, Tagesroute, Karte, Vorschläge) ansehen und die
-   Excel-Datei mit allen drei Tabellenblättern herunterladen.
+6. Ergebnis (Kennzahlen, Tagesroute, Karte, Vorschläge) ansehen und die
+   Routenplanung als Excel-Datei herunterladen.
+
+Technisch übersetzt `ui/routenplanung_tab.py` die beiden fachlich
+unterschiedlichen Ergebnisstrukturen (Bestandskunden-Score/-Priorität bzw.
+Neukunden-Score/-Priorität) in das generische Datenformat, das
+`logic/route_planner.py` schon immer erwartet hat (`hotel_name`, `dirs21_id`,
+`ort`, `gesamtprioritaet`, `crm_status`, `fachliche_top_empfehlung`,
+`fachliche_top_empfehlung_score`, `zimmeranzahl`) - `route_planner.py` selbst
+musste dafür nicht verändert werden.
 
 | Tabellenblatt | Inhalt |
 |---|---|
-| `Sales Intelligence` (bzw. das erste Blatt) | Wie bisher - Unternehmensname, Website, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID. Wird durch die Routenplanung **nicht** erweitert. |
 | `Routenplanung` | Wird beim Export **automatisch aus den in der Webapp gepflegten Terminen** erzeugt - dokumentiert alle angelegten Termine. |
 | `Routen-Ergebnis` | Die berechnete Tagesroute für das gewählte Datum - wird neu erzeugt. |
+
+Die vollständige Bestandskunden-/Neukunden-Analyse (inkl. aller
+fachspezifischen Spalten) steht über die jeweils **eigenen** Excel-Downloads
+der beiden Reiter zur Verfügung (siehe deren eigene Abschnitte) - der
+Routenplanungs-Export bleibt bewusst auf die Route selbst fokussiert.
 
 **Optionaler Import:** Enthält die hochgeladene Excel-Datei bereits ein
 Tabellenblatt `Routenplanung` (z.B. aus einem früheren Export oder einer
@@ -369,93 +421,179 @@ nichts geschätzt oder erfunden.
 
 **Weitere Funktionen:** Vergleich aktuelle vs. optimierte Reihenfolge
 (nur flexible Termine werden dabei umgestellt), einfache Kartendarstellung
-(`st.map`), und "Passende Unternehmen entlang der Route" - Vorschläge aus
-Sales Intelligence ohne Termin am gewählten Tag, in der Nähe der Route
-(Näherung über den Ort, da Sales Intelligence keine Straßenadresse führt),
-sortiert nach Gesamtpriorität vor Distanz. Reines Vorschlagsranking - es wird
-**nie automatisch ein Termin eingeplant**. Die Verknüpfung mit
-Sales-Intelligence-Daten erfolgt bevorzugt über die DIRS21-ID, sonst über
-einen eindeutigen Unternehmensnamen; ist kein sicheres Matching möglich, wird
-der Termin trotzdem geplant, nur ohne Zusatzinformationen.
+(`st.map`), und "Passende Unternehmen entlang der Route" - Vorschläge aus der
+gewählten Datenquelle (Bestandskunden/Neukunden/beide) ohne Termin am
+gewählten Tag, in der Nähe der Route (Näherung über den Ort, da weder
+Bestandskunden- noch Neukunden-Ergebnisse eine Straßenadresse führen),
+sortiert nach Priorität vor Distanz. Reines Vorschlagsranking - es wird
+**nie automatisch ein Termin eingeplant**. Die Verknüpfung erfolgt bevorzugt
+über die DIRS21-ID, sonst über einen eindeutigen Unternehmensnamen; ist kein
+sicheres Matching möglich, wird der Termin trotzdem geplant, nur ohne
+Zusatzinformationen.
 
-## Neukundenakquise (dritter Reiter in app.py) - Competitive Gap Analysis
+## Bestandskunden (erster Reiter in app.py)
 
-Eigenständiger Funktionsbereich für Unternehmen mit den Adressgruppen
-Akquise, Neukunde, Interessent oder ehemaliger Kunde. Nutzt ausschließlich
-die bereits im Reiter "Sales Intelligence" berechneten Ergebnisse (kein
-zusätzlicher Upload, keine zweite Analyse) und erkennt zusätzlich, welcher
-Mitbewerber (Booking-Engine-Anbieter) aktuell technisch im Einsatz ist.
+**Subline in der Webapp:** "Cross-Selling-Potenziale erkennen und
+Bestandskunden priorisieren."
 
-**Wichtig:** Dieser Reiter erzeugt bewusst **keine Gesprächseinstiege,
-Gesprächsleitfäden oder Vertriebsansätze**. Er beantwortet ausschließlich die
-Frage "Wo besteht gegenüber dem technisch erkannten Mitbewerber ein
-belegbares Differenzierungspotenzial?" als nüchterne Einstufung (Competitive
-Gap), nicht als Formulierungshilfe.
+**Zentrale Frage:** Welche zusätzlichen DIRS21-Produkte besitzen bei diesem
+bestehenden Kunden echtes Cross-Selling-Potenzial? Mitbewerber-Erkennung ist
+hier bewusst **nicht** relevant (siehe Reiter "Neukunden" weiter unten).
 
-**Drei strikt getrennte Ebenen:**
-1. **Hotelbedarf / DIRS21-Fit** - ausschließlich die bestehende, unveränderte
-   Scoring-/Empfehlungslogik (`logic/scoring.py`, `logic/recommendations.py`).
-   Der Mitbewerber kann diese Fit-Scores an keiner Stelle erhöhen oder senken.
-2. **Erkannte Systemlandschaft** - rein technische Erkennung
-   (`logic/competitor_detection.py`): prüft Buchungslinks, iFrames, Scripts,
-   Formulare und Query-Parameter der bereits gecrawlten Seiten (keine
-   zusätzlichen Web-Requests) gegen die zentrale Knowledgebase
-   `knowledge/competitors.yaml`. Liefert getrennte Felder für IBE/Booking
-   Engine, PMS und Channelmanager - **die erkannte Booking Engine führt
-   NIEMALS automatisch zu "PMS erkannt"**, da dafür aktuell kein öffentlich
-   sichtbares technisches Merkmal existiert (nur IBE wird aktuell technisch
-   erkannt; PMS/Channelmanager bleiben bewusst "Nicht eindeutig erkannt").
-   Erkennungssicherheit: **hoch** (eindeutige Domain/iFrame/Query-Parameter),
-   **mittel** (z.B. Namensnennung in der Datenschutzbestimmung) oder **nicht
-   eindeutig** (reine Texterwähnung) - ein konkreter Anbietername wird nur ab
-   "mittel" ausgegeben. Hoteltyp, Region oder "typischer Kunde" eines
-   Anbieters sind niemals ein Erkennungsmerkmal.
-3. **Wettbewerbs-/Differenzierungspotenzial** - ausschließlich
-   `logic/competitor_comparison.py`: vergleicht den (unveränderten) DIRS21-Fit
-   je Produkt mit der Capability-Matrix des erkannten Mitbewerbers aus der
-   Knowledgebase (`yes`/`partial`/`no`/`unknown` je Funktion) zu einem
-   **Competitive-Gap-Status** (`Sehr hoch`/`Hoch`/`Mittel`/`Gering`/
-   `Kein klarer Gap`/`Unbekannt`). Ein niedriger DIRS21-Fit erzeugt nie einen
-   hohen Gap, nur weil der Mitbewerber die Funktion nicht anbietet; ein
-   unbekannter Funktionsumfang (`unknown`) wird nie als "nein" interpretiert.
+**Eigener Upload:** "Bestandskundenliste hochladen" - dieselbe HubSpot-Excel-
+Struktur wie bisher (Unternehmensname, Unternehmensdomain, Ort, Zimmeranzahl,
+Adressgruppe, DIRS21-ID). Die Adressgruppe entscheidet weiterhin über die
+CRM-Einordnung; Werte ungleich "Kunde" führen zu keinem Abbruch, sondern zu
+einem Prüfhinweis.
+
+**DIRS21-Erkennung bleibt relevant:** Die bestehende, konservative technische
+Erkennung (`logic/dirs21_detection.py`, unverändert) prüft weiterhin
+Direktbuchung, Gutscheinshop usw. **Ein bereits genutztes Produkt wird nie
+als Cross-Selling-Empfehlung vorgeschlagen** - z.B. wird bei bereits
+erkanntem Gutscheinshop automatisch das nächstbeste, noch nicht genutzte
+Produkt geprüft (siehe `logic/scoring_bestandskunden.py`,
+`_ungenutzte_module_sortiert`, die dieselbe "bereits genutzt"-Zuordnung wie
+`logic/recommendations.ALREADY_USED_FLAG_BY_MODULE` verwendet statt sie
+erneut zu definieren).
+
+**`bestandskunden_score` (0-100)** - bewertet ausschließlich "wie attraktiv
+ist dieser Bestandskunde für zusätzliches Cross-Selling" (NICHT die
+allgemeine DIRS21-Eignung):
+
+| Baustein | Max. Punkte | Logik |
+|---|---|---|
+| Stärkstes noch nicht genutztes Potenzial | 50 | Linear nach Fit-Score des höchsten ungenutzten Moduls |
+| Weitere relevante ungenutzte Potenziale (Fit ≥ 40) | 25 | Gestaffelt nach Anzahl |
+| Betriebsgröße (Zimmeranzahl) | 15 | Gestaffelt, ergänzend - kleine Häuser werden nicht pauschal abgewertet |
+| Datenqualität (Website erreichbar, Zimmeranzahl bekannt, keine Prüfhinweise) | 10 | Additiv |
+
+**`bestandskunden_prioritaet` (A-D):** A/B/C/D nach Score-Schwellen
+(75/55/35/0), aber **nicht blind nach Punktzahl** - Priorität A setzt
+zusätzlich mindestens eine wirklich starke, noch nicht genutzte Cross-
+Selling-Chance voraus (Fit ≥ 60 des stärksten ungenutzten Moduls), sonst wird
+auf B zurückgestuft.
+
+**`top_cross_selling`/`top_cross_selling_fit`:** nur ungenutzte Module, aktive
+Empfehlung erst ab Fit ≥ 60, sonst `"Keine klare Cross-Selling-Empfehlung"`.
+
+**Webapp-Ansicht:** kompakte Tabelle (Unternehmen, Ort, Zimmeranzahl,
+DIRS21-ID, Top Cross-Selling, Fit, Score, Priorität, Prüfhinweis) mit Filtern
+(Priorität, Top Cross-Selling, Ort, Zimmeranzahl, Adressgruppe, Prüffälle).
+Detailansicht mit klar getrennten Bereichen A) Stammdaten, B) bereits im
+Einsatz, C) noch relevantes Potenzial, D) Produkt-Fit-Matrix, E)
+Bestandskunden-Score (Punkteaufschlüsselung), F) Prüfhinweise.
+
+**Excel-Export** (`export_bestandskunden_excel_bytes`, eigene Datei): Unternehmensname,
+Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID,
+DIRS21_Direktbuchung/Gutscheinshop/PLUS/MICE_erkannt, die fünf Fit-Scores,
+Top_Cross_Selling(_Fit), Bestandskunden_Score/_Prioritaet, Pruefhinweis,
+Analyse_Datum. **Keine Mitbewerberfelder.**
+
+## Neukunden (zweiter Reiter in app.py)
+
+**Subline in der Webapp:** "Marktpotenziale, Wettbewerbssituation und
+DIRS21-Chancen analysieren."
+
+**Zentrale Frage:** Wie attraktiv ist dieses Unternehmen insgesamt für DIRS21
+und welche zusätzlichen Potenziale bestehen gegenüber der aktuellen
+Systemlandschaft? Ein Neukunde ist **grundsätzlich relevant**, auch ohne
+starken Zusatzmodul-Fit - DIRS21-Nutzungsfelder (Direktbuchung/Gutscheinshop
+erkannt) stehen hier bewusst **nicht** im Vordergrund (höchstens als
+Prüfhinweis, falls technisch zufällig erkannt).
+
+**Eigener Upload:** "Neukundenliste hochladen" - Adressgruppe kann Akquise,
+Neukunde, Interessent oder ehemaliger Kunde enthalten; keine zusätzlichen
+Lead-Status-Felder (HubSpot pflegt das bereits).
+
+**Mitbewerber-Erkennung ist hier zentral** (`logic/competitor_detection.py`,
+unverändert wiederverwendet) - IBE/Booking Engine, Channelmanager und PMS
+bleiben strikt getrennt; eine erkannte IBE bedeutet nie automatisch, dass
+auch das PMS desselben Anbieters genutzt wird (PMS/Channelmanager bleiben
+technisch "Nicht eindeutig erkannt", siehe Knowledgebase-Abschnitt unten).
+
+**Fokus-Mitbewerber** (`knowledge/competitors.yaml` ->
+`sales_relevance.focus_competitor: true`): Seekda, HotelNetSolutions,
+SiteMinder, Mews, vioma, Viato - im Vertrieb besonders häufig relevant.
+Beeinflussen den Neukunden-Score moderat positiv (max. 10 von 100 Punkten),
+**niemals allein Priorität A**.
+
+**`kernpotenzial_score` (0-100)** - "wie attraktiv ist dieses Hotel
+grundsätzlich als Neukunde für die DIRS21-Kernlösung", unabhängig von
+Zusatzmodulen. Berücksichtigt (jedes Einzelsignal max. 15 Punkte, siehe
+`logic/scoring_neukunden.py`): Angebotsbreite, vorhandene professionelle
+Buchungsinfrastruktur (**eine erkannte Mitbewerber-IBE ist ein POSITIVES
+Signal** - sie zeigt aktiven digitalen Direktvertrieb, kein Minuspunkt),
+Betriebsgröße (gestaffelt, weder 10 noch 80 Zimmer sind automatisch gut/
+schlecht), erkannte Beherbergungsform, Angebots-/Vertriebskomplexität,
+bereits vorhandene DIRS21-Direktbuchung.
+
+**`neukunden_score` (0-100)** - Zusammensetzung:
+
+| Baustein | Max. Punkte | Logik |
+|---|---|---|
+| Kernpotenzial | 35 | Skaliert aus kernpotenzial_score |
+| Zusatzmodul-Potenziale | 25 | Stärkster Fit (15) + zweitstärkster (7) + Bonus weitere ≥60 (3) |
+| Competitive Gap | 25 | Stärkster Gap über alle 5 Produkte - "unknown" erhält einen neutralen Basiswert (8), NIE 0 wie "Kein klarer Gap" und NIE wie "no" behandelt |
+| Fokus-Mitbewerber/Systemlandschaft | 10 | Nur bei Erkennungssicherheit hoch/mittel |
+| Datenqualität | 5 | Website erreichbar, Zimmeranzahl bekannt, Mitbewerber sicher erkannt, Merkmale vorhanden |
+
+Ein fehlender/unbekannter Mitbewerber wird dabei **genauso** behandelt wie
+ein bekannter Mitbewerber mit unbekannter Capability (beide ergeben
+`capability_status = "unknown"`) - ein Neukunde wird nie allein deshalb
+abgewertet, weil der aktuelle Anbieter nicht identifiziert werden konnte.
+
+**`neukunden_prioritaet` (A-D):** Score-Schwellen (75/55/35/0) plus
+Plausibilitätsregeln für A (mindestens eine gilt: sehr hohes Kernpotenzial,
+ein starker Competitive Gap, mehrere starke Zusatzmodul-Potenziale, oder eine
+starke Kombination aus Kernpotenzial + Fokus-Mitbewerber + Produktpotenzial)
+- ein Fokus-Mitbewerber allein reicht dafür nie aus.
+
+**Competitive Gap Analysis:** wiederverwendet die bestehende Capability-/
+Gap-Bestimmung aus `logic/competitor_comparison.py`
+(`_capability_status`/`_gap_fuer_fit_und_capability`/
+`_downgrade_bei_unsicherer_erkennung`) - KEINE zweite, abweichende
+Gap-Logik. Reihenfolge: 1) Hotelbedarf/Produkt-Fit (unverändert aus
+`logic/scoring.py`) feststellen, 2) Mitbewerber erkennen, 3)
+Mitbewerber-Capability aus der Knowledgebase laden, 4) vergleichen, 5)
+Differenzierungspotenzial bestimmen. Der Mitbewerber kann den Produkt-Fit an
+keiner Stelle verändern.
+
+**`top_dirs21_potenzial`/`_fit`:** stärkstes Zusatzmodul, aktive Anzeige ab
+Fit ≥ 60, sonst `"Kein starkes Zusatzmodul-Potenzial"` - der Neukunde bleibt
+trotzdem grundsätzlich relevant.
+
+**Webapp-Ansicht:** kompakte Tabelle (Unternehmen, Ort, Zimmeranzahl,
+Adressgruppe, Mitbewerber, Mitbewerber-Typ, Kernpotenzial, Top DIRS21
+Potenzial, Fit, Competitive Gap, Neukunden-Score, Neukunden-Priorität) mit
+Filtern (Priorität, Mitbewerber, Mitbewerber-Typ, DIRS21-Koexistenz, Top
+Potenzial, Competitive Gap, Ort, Zimmeranzahl, Adressgruppe, Fokus-
+Mitbewerber). Detailansicht mit A) Unternehmensprofil, B) erkannter
+Systemlandschaft (PMS/IBE/Channelmanager + Sicherheit), C) Kernpotenzial, D)
+DIRS21-Zusatzpotenzialen, E) Competitive-Gap-Matrix (Produkt/Fit/Mitbewerber-
+Abdeckung/Gap), F) Neukunden-Score (Bausteine), G) Prüfhinweisen.
 
 **Mitbewerber-Knowledgebase** (`knowledge/competitors.yaml`): zentrale,
 erweiterbare YAML-Datei - neue Anbieter oder Fingerprints werden
-ausschließlich dort ergänzt, nie im Code. Aktuell hinterlegt: HotelNetSolutions,
-SiteMinder, Hotel-Spider, Mews, SoftTec, easyBooking, RoomRaccoon, CASABLANCA,
-Guestline, Viato, vioma, BusyRooms, Seekda - jeweils mit Typ (PMS/IBE/
-Channelmanager/All-In-One), `dirs21_coexistence` (ja/nein/nicht bestätigt)
-und einer Capability-Matrix für die fünf vergleichbaren DIRS21-Module (PLUS,
-Gutscheinshop, MICE, Event-Assistent, Insights). Nur fachlich bestätigte
-Capability-Werte sind hinterlegt - alles andere bleibt bewusst `unknown`
-(siehe Moduldokumentation von `logic/competitor_comparison.py` für die genaue
-Herkunft jedes Werts).
+ausschließlich dort ergänzt, nie im Code. Aktuell hinterlegt:
+HotelNetSolutions, SiteMinder, Hotel-Spider, Mews, SoftTec, easyBooking,
+RoomRaccoon, CASABLANCA, Guestline, Viato, vioma, BusyRooms, Seekda - jeweils
+mit Typ (PMS/IBE/Channelmanager/All-In-One), `dirs21_coexistence`
+(ja/nein/nicht bestätigt), `sales_relevance.focus_competitor` und einer
+Capability-Matrix für die fünf vergleichbaren DIRS21-Module (`yes`/`partial`/
+`no`/`unknown` je Funktion). Nur fachlich bestätigte Capability-Werte sind
+hinterlegt - alles andere bleibt bewusst `unknown`.
 
-**Neukunden-Priorität:** eigenständige A-D-Einstufung, komplett unabhängig
-von der bestehenden `gesamtprioritaet` der Sales-Intelligence-Analyse. Ein
-erkannter Mitbewerber allein erzeugt nie automatisch eine hohe Priorität -
-nur die Kombination aus einem relevanten DIRS21-Fit UND einem belegten
-Competitive Gap kann die Priorität anheben.
+**Keine Gesprächseinstiege/Vertriebsansätze:** Dieser Bereich erzeugt
+ausschließlich die nüchterne Competitive-Gap-Einstufung und den Score - keine
+Formulierungshilfen, Gesprächsleitfäden oder Sales-Pitches.
 
-**Webapp-Ansicht:** kompakte Übersichtstabelle (Unternehmen, Ort,
-Adressgruppe, Zimmeranzahl, Mitbewerber, Mitbewerber-Typ, Top DIRS21
-Potenzial, Fit, Competitive Gap, Neukunden-Priorität) mit Filtern, sowie eine
-Detailansicht pro Unternehmen mit erkannter Systemlandschaft (inkl.
-Erkennungsgrund), DIRS21-Kompatibilität, einer Produktmatrix (DIRS21-Produkt /
-Fit / Mitbewerber-Abdeckung / Competitive Gap) und einer Möglichkeit, die
-Mitbewerber-Erkennung **nur für die aktuelle Session** manuell zu korrigieren
-(überschreibt nie `knowledge/competitors.yaml`).
-
-**Excel-Export:** das bestehende Sales-Intelligence-Tabellenblatt wird um die
-Spalten `mitbewerber`, `mitbewerber_typ`, `mitbewerber_erkennungssicherheit`,
-`dirs21_koexistenz`, `staerkstes_dirs21_potenzial`,
-`staerkstes_dirs21_potenzial_fit`, `staerkstes_differenzierungspotenzial`,
-`competitive_gap`, `neukunden_prioritaet`, `pms_anbieter`, `ibe_anbieter` und
-`channelmanager_anbieter` ergänzt (mit Ampelformatierung) - alle übrigen,
-bestehenden Spalten und deren Reihenfolge bleiben unverändert. Die
-detaillierte technische Evidenz und die vollständige Produktmatrix stehen
-bewusst nur in der Webapp-Detailansicht, nicht im Excel-Export ("Excel
-schlank halten").
+**Excel-Export** (`export_neukunden_excel_bytes`, eigene Datei): Unternehmensname,
+Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, Mitbewerber,
+Mitbewerber_Typ, Mitbewerber_Erkennungssicherheit, PMS/IBE/Channelmanager_
+Anbieter, DIRS21_Koexistenz, Kernpotenzial_Score, die fünf Fit-Scores,
+Top_DIRS21_Potenzial(_Fit), Staerkstes_Differenzierungspotenzial,
+Competitive_Gap, Neukunden_Score/_Prioritaet, Pruefhinweis, Analyse_Datum.
+**Keine DIRS21-Nutzungsfelder** (Direktbuchung/Gutscheinshop erkannt).
 
 ## Fachliche Logik (Kurzüberblick)
 
@@ -534,24 +672,28 @@ Details siehe die Kommentare in den jeweiligen `logic/*.py`-Modulen.
 
 ## Excel-Formatierung
 
-Die Ergebnis-Excel-Datei (`analyze.py` und der Download-Button in `app.py`
-nutzen dieselbe zentrale Exportfunktion in `logic/exporter.py`) ist als
-Ampelsystem formatiert, ohne die Werte selbst zu verändern:
+`analyze.py` und `logic/pipeline.py` nutzen weiterhin
+`export_to_excel_bytes`/`export_workbook_bytes` (unverändert). Die beiden
+neuen, getrennten Exporte (`export_bestandskunden_excel_bytes`,
+`export_neukunden_excel_bytes`) verwenden eine generische, namensbasierte
+Formatierung (`_format_scored_sheet`/`_generic_style_for_column` in
+`logic/exporter.py`), ohne die Werte selbst zu verändern:
 
-- `gesamtprioritaet`: A kräftiges Grün, B helles Grün, C Gelb/Orange, D
-  helles Rot (fett).
-- Fit-Score-Spalten (`plus_fit_score`, `gutscheinshop_fit_score`,
-  `mice_fit_score`, `event_assistent_fit_score`,
-  `fachliche_top_empfehlung_score`): grün (80-100) bis hellrot (0-19),
-  dieselben Grenzen wie `logic/scoring.fit_band`.
+- Spalten, die auf `_prioritaet` enden (`bestandskunden_prioritaet`,
+  `neukunden_prioritaet`): A kräftiges Grün, B helles Grün, C Gelb/Orange, D
+  helles Rot (fett) - dieselbe Ampel wie `gesamtprioritaet`.
+- `mitbewerber_erkennungssicherheit`: hoch hellgrün, mittel gelb, nicht
+  eindeutig neutral/orange.
+- `dirs21_koexistenz`: ja grün, nein hellrot/orange, nicht bestätigt gelb.
+- `competitive_gap`: Sehr hoch kräftiges Grün, Hoch helles Grün, Mittel Gelb,
+  Gering Orange, Kein klarer Gap/Unbekannt neutral/grau.
+- Spalten, die auf `_score` oder `_fit` enden (z.B. `bestandskunden_score`,
+  `neukunden_score`, `kernpotenzial_score`, `top_cross_selling_fit`,
+  `top_dirs21_potenzial_fit`): grün (80-100) bis hellrot (0-19), dieselben
+  Grenzen wie `logic/scoring.fit_band`.
 - `pruefhinweis`: dezentes Warn-Orange, wenn nicht leer.
-- Erkannte DIRS21-Produkte (`dirs21_direktbuchung_erkannt`,
-  `dirs21_gutscheinshop_erkannt`, `dirs21_plus_erkannt`,
-  `dirs21_mice_erkannt`): dezentes Grün bei `true`, neutral bei `false`.
-- Kopfzeile fett, AutoFilter, erste Zeile fixiert, sinnvolle
-  Spaltenbreiten, Zeilenumbruch für lange Textspalten
-  (`gefundene_merkmale`, `verkaufsmodus`, `vertriebliche_prioritaetsaktion`,
-  `zusatzmodul_als_argument`, `pruefhinweis`).
+- Kopfzeile fett, AutoFilter, erste Zeile fixiert, sinnvolle Spaltenbreiten,
+  Zeilenumbruch für lange Textspalten.
 
 ## Tests
 
