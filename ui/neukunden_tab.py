@@ -421,11 +421,39 @@ def render_neukunden_tab(config: dict) -> None:
     selected = render_company_selection(companies, key_prefix="neukunden")
     st.caption(f"{len(selected)} von {total_companies} Unternehmen werden bei Klick auf \"Neukunden analysieren\" analysiert.")
 
+    default_deep_detection = config.get("analysis", {}).get("enable_deep_booking_detection", True)
+    deep_detection_enabled = st.checkbox(
+        "Erweiterte Browser-Prüfung (Deep-Detection) für unklare Fälle aktivieren",
+        value=default_deep_detection,
+        key="neukunden_deep_detection_toggle",
+        help=(
+            "Rendert Websites bei Bedarf zusätzlich mit einem echten Browser (Chromium), um auch per "
+            "JavaScript eingebundene Booking Engines zu erkennen (siehe README). Das benötigt deutlich mehr "
+            "Arbeitsspeicher als die normale Analyse. Auf speicherbegrenztem Hosting (z.B. Streamlit "
+            "Community Cloud mit 1 GB RAM) kann das bei sehr großen Listen zu Abbrüchen führen - bei "
+            "wiederholten Abbrüchen hier deaktivieren. Die Analyse läuft dann nur mit der schnellen, sehr "
+            "ressourcenschonenden statischen Erkennung weiter (etwas weniger genau bei Booking Engines, die "
+            "ausschließlich per JavaScript eingebunden sind)."
+        ),
+    )
+    if not deep_detection_enabled:
+        st.caption(
+            "ℹ️ Erweiterte Browser-Prüfung ist deaktiviert - es wird nur die schnelle, statische Analyse "
+            "verwendet (kein Chromium-Prozess, deutlich geringerer Speicherbedarf)."
+        )
+
     if st.button("Neukunden analysieren", type="primary", key="neukunden_analysieren_button"):
         total = len(selected)
         progress_bar = st.progress(0.0)
         status_line = st.empty()
         rows = []
+        # Per-Lauf-Override für die Deep-Detection (siehe Checkbox oben) -
+        # verändert NICHT die geladene config.yaml, gilt nur für diesen
+        # Analyse-Lauf (siehe Auftrag "ich kann die Checkbox jederzeit
+        # umschalten, ohne die Konfigurationsdatei zu bearbeiten").
+        run_config = dict(config)
+        run_config["analysis"] = dict(config.get("analysis", {}))
+        run_config["analysis"]["enable_deep_booking_detection"] = deep_detection_enabled
         # Zwischenstand nach JEDEM Unternehmen sofort in den Session-State
         # schreiben (siehe Auftrag "Analyse bricht ohne Ergebnisse ab") -
         # vorher wurde das Ergebnis erst NACH der kompletten Schleife
@@ -451,7 +479,7 @@ def render_neukunden_tab(config: dict) -> None:
                     status_line.info(f"**{i} / {total}** — {name} — {step}")
 
                 try:
-                    row = analyze_neukunde(company, config, progress_callback=_on_step)
+                    row = analyze_neukunde(company, run_config, progress_callback=_on_step)
                 except Exception as exc:
                     row = {col: "" for col in APP_COLUMNS_NEUKUNDEN}
                     row["hotel_name"] = name
