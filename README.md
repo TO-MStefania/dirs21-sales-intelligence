@@ -530,19 +530,34 @@ allgemeine DIRS21-Eignung):
 
 | Baustein | Max. Punkte | Logik |
 |---|---|---|
-| Stärkstes noch nicht genutztes Potenzial | 50 | Linear nach Fit-Score des höchsten ungenutzten Moduls |
-| Weitere relevante ungenutzte Potenziale (Fit ≥ 40) | 25 | Gestaffelt nach Anzahl |
+| Stärkstes noch nicht genutztes Potenzial | 50 | Linear nach GEWICHTETEM Fit-Score des höchsten ungenutzten Moduls |
+| Weitere relevante ungenutzte Potenziale (gewichteter Fit ≥ 40) | 25 | Gestaffelt nach Anzahl |
 | Betriebsgröße (Zimmeranzahl) | 15 | Gestaffelt, ergänzend - kleine Häuser werden nicht pauschal abgewertet |
 | Datenqualität (Website erreichbar, Zimmeranzahl bekannt, keine Prüfhinweise) | 10 | Additiv |
+
+**Cross-Selling-Gewichtung je Modul (`logic/scoring_bestandskunden.
+CROSS_SELLING_GEWICHTUNG`):** DIRS21 Insights ist ein reines Reporting-Tool -
+ist beim Hotel bereits ein Revenue-Management-System im Einsatz (öffentlich
+nicht zuverlässig erkennbar), sind viele Insights-Kennzahlen dort bereits
+enthalten. Der rohe, zentral berechnete Fit-Score (`logic/scoring.py`,
+unverändert) wird deshalb für die Cross-Selling-AUSWAHL und für
+`bestandskunden_score`/`_prioritaet` gewichtet: PLUS/Gutscheinshop/
+Event-Assistent am höchsten (Gewicht 1,0), danach MICE (0,9), zuletzt
+Insights (0,75). Ein isolierter, hoher Insights-Fit kann dadurch nicht mehr
+automatisch Priorität A oder "Top Cross-Selling: Insights" erzeugen, wenn ein
+anderes Modul einen vergleichbaren rohen Fit hat. **`top_cross_selling_fit`
+zeigt weiterhin den tatsächlichen, ungewichteten Fit-Score** - nur WELCHES
+Modul gewinnt und wie stark es einfließt, berücksichtigt die Gewichtung.
 
 **`bestandskunden_prioritaet` (A-D):** A/B/C/D nach Score-Schwellen
 (75/55/35/0), aber **nicht blind nach Punktzahl** - Priorität A setzt
 zusätzlich mindestens eine wirklich starke, noch nicht genutzte Cross-
-Selling-Chance voraus (Fit ≥ 60 des stärksten ungenutzten Moduls), sonst wird
-auf B zurückgestuft.
+Selling-Chance voraus (gewichteter Fit ≥ 60 des stärksten ungenutzten
+Moduls), sonst wird auf B zurückgestuft.
 
-**`top_cross_selling`/`top_cross_selling_fit`:** nur ungenutzte Module, aktive
-Empfehlung erst ab Fit ≥ 60, sonst `"Keine klare Cross-Selling-Empfehlung"`.
+**`top_cross_selling`/`top_cross_selling_fit`:** nur ungenutzte Module, Auswahl
+und Mindestschwelle (gewichteter Fit ≥ 60) anhand des gewichteten Scores,
+sonst `"Keine klare Cross-Selling-Empfehlung"`.
 
 **Webapp-Ansicht:** kompakte Tabelle (Unternehmen, Ort, Zimmeranzahl,
 DIRS21-ID, Top Cross-Selling, Fit, Score, Priorität, Prüfhinweis) mit Filtern
