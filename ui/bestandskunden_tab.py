@@ -38,6 +38,10 @@ from ui.shared import (
 # logic/parallel_runner.py - rein I/O-gebundenes Crawling, kein Playwright,
 # daher auch auf Streamlit Community Cloud unkritisch parallelisierbar).
 DEFAULT_MAX_PARALLEL_WORKERS = 10
+# Fallback-Zeitlimit pro Unternehmen (siehe logic/parallel_runner.py) -
+# verhindert, dass eine einzelne extrem langsame Website den gesamten
+# restlichen Batch für immer blockiert.
+DEFAULT_MAX_SECONDS_PER_COMPANY = 150
 
 PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "dirs21_id", "adressgruppe"]
 
@@ -335,15 +339,45 @@ def render_bestandskunden_tab(config: dict) -> None:
             st.session_state["bestand_results_df"] = [r for r in rows if r is not None]
             progress_bar.progress(completed / total)
 
+        def _on_timeout(index, company):
+            # Eine einzelne, extrem langsame/"tröpfelnde" Website darf den
+            # restlichen Batch nicht für immer blockieren (siehe
+            # logic/parallel_runner.py) - requests' eigener Timeout schützt
+            # davor NICHT. Das betroffene Unternehmen wird stattdessen als
+            # Prüffall markiert, der restliche Batch läuft normal weiter.
+            name = company.get("hotel_name") or "(unbekannt)"
+            row = {col: "" for col in APP_COLUMNS_BESTANDSKUNDEN}
+            row["hotel_name"] = name
+            row["website"] = company.get("website") or ""
+            row["pruefhinweis"] = (
+                "Analyse übersprungen: Zeitlimit überschritten (Website antwortet extrem "
+                "langsam/unvollständig) - bei Bedarf einzeln über \"Unternehmen erneut "
+                "analysieren\" prüfen."
+            )
+            row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            _on_result(index, company, row)
+
         # Rein I/O-gebundenes Website-Crawling (kein Playwright/Chromium,
         # siehe logic/pipeline_bestandskunden.py) - mehrere Unternehmen
         # gleichzeitig zu analysieren verkürzt die Gesamtlaufzeit bei sehr
         # großen Listen (~1000 Hotels) von potenziell mehreren Stunden auf
         # wenige Minuten, ohne den auf Streamlit Community Cloud knappen
         # Arbeitsspeicher zusätzlich zu belasten (siehe Auftrag "Bestandskunden
-        # - immer noch keine Ergebnisse nach einer Weile").
+        # - immer noch keine Ergebnisse nach einer Weile"). Zusätzlich ein
+        # hartes Zeitlimit pro Unternehmen (max_seconds_per_company), damit
+        # eine einzelne extrem langsame Website nicht alle Worker dauerhaft
+        # belegt und den gesamten Batch zum Stillstand bringt (siehe Auftrag
+        # "Bestandskunden - Analyse bleibt bei ~200-350 von 350 Unternehmen
+        # kommentarlos stehen", ohne jede Fehlermeldung/Neustart in den
+        # Streamlit-Cloud-Logs).
         max_workers = config.get("analysis", {}).get("max_parallel_workers", DEFAULT_MAX_PARALLEL_WORKERS)
-        run_parallel(selected, _analyze_one, _on_result, max_workers=max_workers)
+        item_timeout_seconds = config.get("analysis", {}).get(
+            "max_seconds_per_company", DEFAULT_MAX_SECONDS_PER_COMPANY,
+        )
+        run_parallel(
+            selected, _analyze_one, _on_result,
+            max_workers=max_workers, item_timeout_seconds=item_timeout_seconds, on_timeout=_on_timeout,
+        )
 
         status_line.empty()
         progress_bar.empty()

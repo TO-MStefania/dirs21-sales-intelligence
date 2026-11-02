@@ -491,6 +491,23 @@ Ergebnisse/Fehlermeldung aus, da die Ergebnistabelle erst nach Abschluss der
 kompletten Liste sichtbar wird. Jedes fertige Ergebnis wird weiterhin sofort
 (nicht erst am Ende) in den Session-State geschrieben.
 
+**Hartes Zeitlimit pro Unternehmen (`analysis.max_seconds_per_company`,
+Standard 150s):** `requests`' eigener Timeout-Parameter schützt NICHT vor
+einer Website, die Daten extrem langsam "tröpfelt" (jeder empfangene
+Byte-Chunk setzt den Lese-Timeout intern zurück) - eine einzelne
+pathologische Website könnte eine Analyse sonst für immer blockieren und
+dabei nach und nach alle `max_parallel_workers` Worker dauerhaft belegen,
+bis der gesamte Batch kommentarlos stehen bleibt (ohne Exception, ohne
+Absturz/Neustart in den Cloud-Logs - genau das real beobachtete Symptom bei
+einer ~350 Hotels umfassenden Liste). `logic/parallel_runner.py` wartet pro
+Unternehmen deshalb maximal `max_seconds_per_company` Sekunden; wird das
+überschritten, wird dieses eine Unternehmen als Prüffall markiert
+("Zeitlimit überschritten") und der restliche Batch läuft normal weiter -
+der betroffene Worker-Thread selbst kann dabei nicht sauber abgebrochen
+werden (Python kann einen blockierenden Socket-Read nicht von außen
+unterbrechen) und läuft harmlos im Hintergrund weiter, bis die Website doch
+noch antwortet oder die Verbindung von außen beendet wird.
+
 **Eigener Upload:** "Bestandskundenliste hochladen" - dieselbe HubSpot-Excel-
 Struktur wie bisher (Unternehmensname, Unternehmensdomain, Ort, Zimmeranzahl,
 Adressgruppe, DIRS21-ID). Die Adressgruppe entscheidet weiterhin über die

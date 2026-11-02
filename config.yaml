@@ -101,6 +101,14 @@ analysis:
   # NICHT für den Reiter "Neukunden" (bleibt wegen des geteilten
   # Chromium-Prozesses bei der Deep-Detection sequenziell).
   max_parallel_workers: 10
+  # Hartes Zeitlimit (Sekunden) pro Unternehmen im Reiter "Bestandskunden"
+  # (siehe logic/parallel_runner.py) - schützt davor, dass EINE einzelne,
+  # extrem langsame oder "tröpfelnde" Website (requests' eigener Timeout
+  # schützt davor NICHT, da jeder empfangene Byte-Chunk den Lese-Timeout
+  # zurücksetzt) den gesamten restlichen Batch für immer blockiert. Deutlich
+  # über dem realistischen Worst Case angesetzt (bis zu 8 Unterseiten à bis
+  # zu 10s Timeout + optionale Websuche zur Zimmeranzahl ≈ 90s).
+  max_seconds_per_company: 150
   # Deep-Detection der Mitbewerber-/IBE-Erkennung (Stufe 2-4, siehe
   # logic/booking_flow_detection.py und logic/competitor_detection.py) -
   # rendert die Website mit Chromium/Playwright und klickt den Buchungs-
