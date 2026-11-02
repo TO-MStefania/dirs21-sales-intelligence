@@ -137,8 +137,17 @@ die beiden eigenen Abschnitte weiter unten).
 2. Im gewünschten Reiter (**Bestandskunden** oder **Neukunden**) über den
    dortigen Datei-Upload die passende Excel-Liste hochladen (dieselbe
    HubSpot-Excel-Exportstruktur wie bisher - Unternehmensname,
-   Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID).
-3. Maximale Anzahl zu analysierender Unternehmen wählen und auf
+   Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID). Die
+   Datei darf beliebig viele weitere, für die Analyse nicht relevante
+   Spalten enthalten (z.B. interne Notizen, Ansprechpartner, CRM-Felder) -
+   nur die in `config.yaml` -> `excel.columns` gemappten Spalten werden
+   gelesen, alle anderen werden ignoriert.
+3. **Standardmäßig werden ALLE Unternehmen der hochgeladenen Liste
+   analysiert.** Optional können über "Einzelne Unternehmen von dieser
+   Analyse ausschließen" gezielt bestimmte Unternehmen abgewählt werden,
+   und über "Maximale Anzahl zu analysierender Unternehmen" (Standard:
+   "Alle") eine Obergrenze gesetzt werden - beides muss explizit gewählt
+   werden, es gibt keinen impliziten Zahlen-Deckel. Anschließend auf
    **"Bestandskunden analysieren"** bzw. **"Neukunden analysieren"**
    klicken - ein Fortschrittsbalken zeigt Position, Unternehmensname und
    aktuellen Analyseschritt; Fehler bei einzelnen Websites brechen die
@@ -262,7 +271,7 @@ data/                             Ablageort für Eingabe-Excel-Dateien (nicht ve
 exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert, nur für analyze.py)
 ```
 
-## Excel-Import (analyze.py)
+## Excel-Import (analyze.py + Webapp-Upload)
 
 Benötigte Spalten pro Unternehmen (Namen über `config.yaml` -> `excel.columns`
 gemappt, da sich die exakten Spaltenüberschriften je Export unterscheiden
@@ -285,6 +294,25 @@ Fehlt eine optionale Spalte im Export komplett, läuft die Analyse trotzdem.
 Fehlt bei einem Unternehmen der Name oder die Website, wird der Datensatz
 trotzdem übernommen (Reihenfolge bleibt erhalten), aber über die Spalte
 `pruefhinweis` markiert. Komplett leere Zeilen werden übersprungen.
+
+**Beliebig viele zusätzliche, nicht relevante Spalten** (interne Notizen,
+Ansprechpartner, CRM-Felder, bereits vorhandene Mitbewerber-Vermerke, ...)
+sind in der hochgeladenen Datei immer erlaubt - nur die oben gemappten
+Spalten werden gelesen, alles andere wird ignoriert.
+
+**Alternative Spaltenüberschriften** (z.B. aus einem anderen CRM-/Hotel-
+Scout-Export statt HubSpot): pro Feld kann in `config.yaml` -> `excel.columns`
+entweder ein einzelner Spaltenname oder eine Liste mehrerer möglicher
+Überschriften hinterlegt werden, z.B. `hotel_name: [Unternehmensname, Name,
+Firma]` - die erste in der jeweiligen Datei tatsächlich vorhandene Spalte
+wird verwendet. Damit funktionieren unterschiedliche Export-Formate ohne
+Code-Änderung; fehlt ein Alias für ein neues Export-Format, reicht eine
+Ergänzung der Liste in `config.yaml`.
+
+**Alle Unternehmen der Liste werden standardmäßig analysiert** - in der
+Webapp gibt es keinen impliziten Zahlen-Deckel mehr. Ein Ausschluss
+einzelner Unternehmen oder eine Mengenbegrenzung muss explizit über die
+entsprechenden Steuerelemente gewählt werden (siehe oben, Schritt 3).
 
 ## Zimmeranzahl (logic/room_count_detection.py, logic/web_search.py)
 

@@ -23,6 +23,7 @@ from ui.shared import (
     ensure_columns,
     numeric,
     priority_pill_html,
+    render_company_selection,
     style_competitive_gap,
     style_fit_score,
     style_koexistenz,
@@ -52,7 +53,6 @@ PROVIDER_STATUS_LABELS = {
     "unclear": "Nicht eindeutig",
 }
 
-LIMIT_OPTIONS = ["5", "10", "20", "50", "Alle"]
 PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "adressgruppe", "dirs21_id"]
 
 COMPACT_COLUMNS = [
@@ -413,11 +413,13 @@ def render_neukunden_tab(config: dict) -> None:
         preview_df = pd.DataFrame(companies, columns=PREVIEW_COLUMNS)
         st.dataframe(preview_df.head(10), width="stretch")
 
-    limit_choice = st.selectbox("Maximale Anzahl zu analysierender Unternehmen", LIMIT_OPTIONS, index=0, key="neukunden_limit")
-    limit = total_companies if limit_choice == "Alle" else min(int(limit_choice), total_companies)
+    # Standardmäßig werden ALLE Unternehmen der Liste analysiert - ein
+    # Ausschluss einzelner Unternehmen oder eine Mengenbegrenzung ist immer
+    # eine explizite Auswahl (siehe ui/shared.render_company_selection).
+    selected = render_company_selection(companies, key_prefix="neukunden")
+    st.caption(f"{len(selected)} von {total_companies} Unternehmen werden bei Klick auf \"Neukunden analysieren\" analysiert.")
 
     if st.button("Neukunden analysieren", type="primary", key="neukunden_analysieren_button"):
-        selected = companies[:limit]
         total = len(selected)
         progress_bar = st.progress(0.0)
         status_line = st.empty()

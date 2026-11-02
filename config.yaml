@@ -11,17 +11,22 @@ excel:
   # Bestandsdatei), wird automatisch das erste Tabellenblatt verwendet - das
   # bleibt vollständig rückwärtskompatibel.
   sheet_name: "Sales Intelligence"
-  # Mapping: fachlicher (interner) Name -> tatsächliche Spaltenüberschrift
-  # in deinem HubSpot-Excel-Export. Die exakten Spaltennamen können sich je
-  # nach Export unterscheiden - hier anpassen, nicht im Code.
+  # Mapping: fachlicher (interner) Name -> tatsächliche Spaltenüberschrift(en)
+  # in deinem Excel-Export. Die exakten Spaltennamen können sich je nach
+  # Export-Quelle unterscheiden (HubSpot, andere CRM-/Hotel-Scout-Exporte,
+  # ...) - pro Feld kann hier entweder EIN Spaltenname (String) oder eine
+  # LISTE mehrerer möglicher Überschriften (Aliase) angegeben werden; beim
+  # Einlesen wird die erste tatsächlich vorhandene Spalte verwendet (siehe
+  # logic/excel_import.py). Zusätzliche, hier nicht aufgeführte Spalten in
+  # der Excel-Datei werden immer ignoriert, egal wie viele es sind.
   columns:
-    hotel_name: Unternehmensname
-    website: Unternehmensdomain
-    ort: Ort
+    hotel_name: [Unternehmensname, Name, Firma, Hotelname, Firmenname]
+    website: [Unternehmensdomain, Website, Domain, Webseite]
+    ort: [Ort, Stadt]
     # optional - vorhandener Excel-Wert hat immer Vorrang vor jeder Recherche
     # (siehe logic/room_count_detection.py). Leer bleibt leer -> dann wird
     # zuerst die Website, danach ggf. sparsam eine Websuche geprüft.
-    zimmeranzahl: Zimmeranzahl
+    zimmeranzahl: [Zimmeranzahl, Zimmer, "Anzahl Zimmer"]
     adressgruppe: Adressgruppe
     dirs21_id: DIRS21-ID
     # optional - falls in deinem Export nicht vorhanden, bleibt das Feld leer
@@ -79,8 +84,6 @@ dirs21_signatures:
     - "touronline"
 
 analysis:
-  # Standardwert für "Max. Anzahl Hotels analysieren" in der Streamlit-App.
-  max_hotels_default: 10
   # Timeout in Sekunden für HTTP-Requests beim Website-Crawling.
   request_timeout_seconds: 10
   # Maximale Anzahl Unterseiten pro Website, die zusätzlich zur Startseite
