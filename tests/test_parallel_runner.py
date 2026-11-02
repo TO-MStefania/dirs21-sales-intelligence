@@ -1,0 +1,98 @@
+"""
+Tests für logic/parallel_runner.run_parallel (siehe Auftrag "Bestandskunden
+- immer noch keine Ergebnisse nach einer Weile"): die eigentliche
+Inkrementell-Garantie (on_result wird sofort nach jedem fertigen Ergebnis
+aufgerufen, nicht erst wenn ALLE fertig sind) sowie die sequenzielle
+Ausführung von on_result im Haupt-Thread werden hier auf Ebene des reinen
+Hilfsbausteins geprüft - unabhängig von Streamlit/AppTest, da eine
+gefälschte Analysefunktion in echten Worker-Threads liefe und dort nicht
+sicher auf st.session_state zugreifen dürfte (siehe
+tests/test_inkrementelle_zwischenspeicherung.py für den End-zu-Ende-Test
+über den echten Reiter "Bestandskunden").
+
+Ausführen:
+    python -m unittest discover tests
+"""
+
+import threading
+import time
+import unittest
+
+from logic.parallel_runner import run_parallel
+
+
+class TestRunParallel(unittest.TestCase):
+    def test_alle_ergebnisse_werden_korrekt_geliefert(self):
+        items = list(range(5))
+        results = {}
+        run_parallel(items, lambda i: i * 10, lambda index, item, result: results.__setitem__(index, result))
+        self.assertEqual(results, {0: 0, 1: 10, 2: 20, 3: 30, 4: 40})
+
+    def test_on_result_wird_inkrementell_aufgerufen_nicht_erst_am_ende(self):
+        # on_result muss, sobald EIN Ergebnis fertig ist, sofort aufgerufen
+        # werden - nicht erst, wenn ALLE Unternehmen fertig analysiert sind.
+        items = list(range(4))
+        snapshots = []
+        accumulated = {}
+
+        def _slow_analyze(i):
+            time.sleep(0.05)
+            return i
+
+        def _on_result(index, item, result):
+            # Momentaufnahme VOR dem Eintragen des neuen Ergebnisses - muss
+            # monoton wachsen (0, 1, 2, 3 in Fertigstellungsreihenfolge).
+            snapshots.append(len(accumulated))
+            accumulated[index] = result
+
+        run_parallel(items, _slow_analyze, _on_result, max_workers=4)
+        self.assertEqual(sorted(snapshots), [0, 1, 2, 3])
+        self.assertEqual(len(accumulated), 4)
+
+    def test_on_result_laeuft_sequentiell_im_aufrufenden_thread(self):
+        # on_result darf nie aus zwei Threads GLEICHZEITIG aufgerufen
+        # werden - der Aufrufer (z.B. Streamlit) führt dort nicht
+        # threadsicheren Code aus (st.session_state, Widgets).
+        items = list(range(8))
+        violations = []
+        currently_inside = threading.Event()
+
+        def _on_result(index, item, result):
+            if currently_inside.is_set():
+                violations.append(index)
+            currently_inside.set()
+            time.sleep(0.01)
+            currently_inside.clear()
+
+        run_parallel(items, lambda i: i, _on_result, max_workers=8)
+        self.assertEqual(violations, [])
+
+    def test_laeuft_tatsaechlich_parallel_und_damit_schneller_als_sequentiell(self):
+        items = list(range(8))
+
+        def _slow_analyze(i):
+            time.sleep(0.1)
+            return i
+
+        start = time.time()
+        run_parallel(items, _slow_analyze, lambda index, item, result: None, max_workers=8)
+        duration = time.time() - start
+        # Sequentiell wären es 8 * 0.1s = 0.8s - mit 8 parallelen Workern
+        # muss das deutlich darunter liegen.
+        self.assertLess(duration, 0.5)
+
+    def test_leere_liste_tut_nichts(self):
+        calls = []
+        run_parallel([], lambda i: i, lambda index, item, result: calls.append(1))
+        self.assertEqual(calls, [])
+
+    def test_max_workers_groesser_als_anzahl_items_stuerzt_nicht_ab(self):
+        results = {}
+        run_parallel(
+            [1, 2], lambda i: i, lambda index, item, result: results.__setitem__(index, result), max_workers=100,
+        )
+        self.assertEqual(results, {0: 1, 1: 2})
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -478,6 +478,19 @@ läuft dadurch auch mit sehr großen Listen (1000+ Unternehmen) zuverlässig
 auch auf speicherbegrenztem Hosting (z.B. Streamlit Community Cloud),
 ohne die Deep-Detection-Checkbox im Reiter "Neukunden" zu benötigen.
 
+**Parallele Analyse (`logic/parallel_runner.py`):** da jede Analyse rein
+I/O-gebunden ist (wartet überwiegend auf Netzwerkantworten beim Crawling)
+und keinen Browser benötigt, werden mehrere Unternehmen gleichzeitig über
+einen Thread-Pool analysiert (`analysis.max_parallel_workers` in
+`config.yaml`, Standard 10). Das verkürzt die Gesamtlaufzeit einer sehr
+großen Liste (~1000 Hotels) von potenziell mehreren Stunden (sequenziell,
+bis zu 8 Unterseiten à bis zu 10s Timeout *pro* Unternehmen) auf wenige
+Minuten - vorher sah ein noch laufender, aber sehr langer sequenzieller
+Lauf auf Streamlit Community Cloud wie ein Hängenbleiben ohne
+Ergebnisse/Fehlermeldung aus, da die Ergebnistabelle erst nach Abschluss der
+kompletten Liste sichtbar wird. Jedes fertige Ergebnis wird weiterhin sofort
+(nicht erst am Ende) in den Session-State geschrieben.
+
 **Eigener Upload:** "Bestandskundenliste hochladen" - dieselbe HubSpot-Excel-
 Struktur wie bisher (Unternehmensname, Unternehmensdomain, Ort, Zimmeranzahl,
 Adressgruppe, DIRS21-ID). Die Adressgruppe entscheidet weiterhin über die
