@@ -271,7 +271,7 @@ data/                             Ablageort für Eingabe-Excel-Dateien (nicht ve
 exports/                          Ablageort für Ergebnis-Excel-Dateien (nicht versioniert, nur für analyze.py)
 ```
 
-## Excel-Import (analyze.py)
+## Excel-Import (analyze.py + Webapp-Upload)
 
 Benötigte Spalten pro Unternehmen (Namen über `config.yaml` -> `excel.columns`
 gemappt, da sich die exakten Spaltenüberschriften je Export unterscheiden
@@ -294,6 +294,25 @@ Fehlt eine optionale Spalte im Export komplett, läuft die Analyse trotzdem.
 Fehlt bei einem Unternehmen der Name oder die Website, wird der Datensatz
 trotzdem übernommen (Reihenfolge bleibt erhalten), aber über die Spalte
 `pruefhinweis` markiert. Komplett leere Zeilen werden übersprungen.
+
+**Beliebig viele zusätzliche, nicht relevante Spalten** (interne Notizen,
+Ansprechpartner, CRM-Felder, bereits vorhandene Mitbewerber-Vermerke, ...)
+sind in der hochgeladenen Datei immer erlaubt - nur die oben gemappten
+Spalten werden gelesen, alles andere wird ignoriert.
+
+**Alternative Spaltenüberschriften** (z.B. aus einem anderen CRM-/Hotel-
+Scout-Export statt HubSpot): pro Feld kann in `config.yaml` -> `excel.columns`
+entweder ein einzelner Spaltenname oder eine Liste mehrerer möglicher
+Überschriften hinterlegt werden, z.B. `hotel_name: [Unternehmensname, Name,
+Firma]` - die erste in der jeweiligen Datei tatsächlich vorhandene Spalte
+wird verwendet. Damit funktionieren unterschiedliche Export-Formate ohne
+Code-Änderung; fehlt ein Alias für ein neues Export-Format, reicht eine
+Ergänzung der Liste in `config.yaml`.
+
+**Alle Unternehmen der Liste werden standardmäßig analysiert** - in der
+Webapp gibt es keinen impliziten Zahlen-Deckel mehr. Ein Ausschluss
+einzelner Unternehmen oder eine Mengenbegrenzung muss explizit über die
+entsprechenden Steuerelemente gewählt werden (siehe oben, Schritt 3).
 
 ## Zimmeranzahl (logic/room_count_detection.py, logic/web_search.py)
 

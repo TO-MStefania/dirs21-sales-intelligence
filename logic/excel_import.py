@@ -1,10 +1,22 @@
 """
-Excel-Import für DIRS21 Sales Intelligence (lokales CLI-Tool).
+Excel-Import für DIRS21 Sales Intelligence (lokales CLI-Tool + Webapp-Upload).
 
-Liest einen HubSpot-Excel-Export ein und mappt die Spalten gemäß
-config.yaml (Abschnitt "excel.columns") auf die intern verwendeten
-Feldnamen. Die exakten Spaltenüberschriften im Export können variieren -
-das Mapping erfolgt deshalb ausschließlich über config.yaml, nicht im Code.
+Liest eine Excel-Liste ein und mappt die Spalten gemäß config.yaml
+(Abschnitt "excel.columns") auf die intern verwendeten Feldnamen. Die
+exakten Spaltenüberschriften im Export können variieren - das Mapping
+erfolgt deshalb ausschließlich über config.yaml, nicht im Code.
+
+SPALTEN-ALIASE (siehe Auftrag "die App soll verschiedene Listen analysieren
+können"): pro Feld kann in config.yaml entweder EIN Spaltenname (String,
+bisheriges Verhalten) oder eine LISTE mehrerer möglicher Spaltenüberschriften
+hinterlegt werden - z.B. hotel_name: ["Unternehmensname", "Name", "Firma"].
+Beim Einlesen wird für jedes Feld die ERSTE in der jeweiligen Excel-Datei
+tatsächlich vorhandene Spalte aus dieser Liste verwendet. Damit funktionieren
+unterschiedliche Export-Formate (HubSpot, andere CRM-/Hotel-Scout-Exporte,
+...) ohne Code-Änderung - nur config.yaml muss ggf. um einen weiteren Alias
+ergänzt werden. Zusätzliche, nicht gemappte Spalten in der Excel-Datei (z.B.
+interne Notizen, Ansprechpartner, bereits vorhandene Mitbewerber-Vermerke)
+werden immer ignoriert, unabhängig von ihrer Anzahl.
 """
 
 import pandas as pd
@@ -27,6 +39,28 @@ def _clean(value) -> str:
         return ""
     text = str(value).strip()
     return "" if text.lower() in ("nan", "none") else text
+
+
+def _column_candidates(column_map: dict, field: str) -> list:
+    """Liefert die konfigurierten Spaltenüberschriften für ein Feld als
+    Liste - egal ob in config.yaml ein einzelner String oder eine Liste von
+    Aliasen hinterlegt ist (siehe Moduldocstring)."""
+    value = column_map.get(field)
+    if not value:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if v]
+    return [str(value)]
+
+
+def _resolve_column(column_map: dict, field: str, df_columns) -> str:
+    """Liefert die ERSTE konfigurierte Spaltenüberschrift für `field`, die
+    tatsächlich in der Excel-Datei vorhanden ist - oder "", falls keiner der
+    Aliase vorkommt."""
+    for candidate in _column_candidates(column_map, field):
+        if candidate in df_columns:
+            return candidate
+    return ""
 
 
 def read_companies(excel_path: str, config: dict) -> list:
@@ -58,15 +92,21 @@ def read_companies(excel_path: str, config: dict) -> list:
 
     column_map = excel_cfg.get("columns", {})
 
+    # Pro Feld wird die erste in DIESER Datei tatsächlich vorhandene
+    # konfigurierte Spalte verwendet (siehe Moduldocstring "Spalten-Aliase") -
+    # einmal pro Import aufgelöst, nicht pro Zeile.
+    resolved_columns = {field: _resolve_column(column_map, field, df.columns) for field in ALL_FIELDS}
+
     for field in REQUIRED_FIELDS:
-        excel_column = column_map.get(field)
-        if not excel_column:
+        candidates = _column_candidates(column_map, field)
+        if not candidates:
             raise ExcelImportError(f"config.yaml: excel.columns.{field} ist nicht gesetzt, aber ein Pflichtfeld.")
-        if excel_column not in df.columns:
+        if not resolved_columns[field]:
+            candidates_text = "' / '".join(candidates)
             raise ExcelImportError(
-                f"Spalte '{excel_column}' (für '{field}') nicht in Excel-Datei gefunden. "
-                f"Vorhandene Spalten: {', '.join(str(c) for c in df.columns)}. "
-                "Bitte config.yaml -> excel.columns anpassen."
+                f"Keine der konfigurierten Spalten für '{field}' ('{candidates_text}') in der Excel-Datei "
+                f"gefunden. Vorhandene Spalten: {', '.join(str(c) for c in df.columns)}. "
+                "Bitte config.yaml -> excel.columns anpassen bzw. um einen weiteren Alias ergänzen."
             )
 
     companies = []
@@ -75,10 +115,8 @@ def read_companies(excel_path: str, config: dict) -> list:
     for idx, raw_row in df.iterrows():
         company = {"zeilennummer": idx + 2}  # +2: Kopfzeile + 0-basierter Index
         for field in ALL_FIELDS:
-            excel_column = column_map.get(field)
-            value = ""
-            if excel_column and excel_column in df.columns:
-                value = _clean(raw_row.get(excel_column))
+            excel_column = resolved_columns[field]
+            value = _clean(raw_row.get(excel_column)) if excel_column else ""
             company[field] = value
 
         if not company["hotel_name"] and not company["website"]:
