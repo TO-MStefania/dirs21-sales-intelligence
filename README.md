@@ -472,6 +472,11 @@ Bestandskunden priorisieren."
 **Zentrale Frage:** Welche zusätzlichen DIRS21-Produkte besitzen bei diesem
 bestehenden Kunden echtes Cross-Selling-Potenzial? Mitbewerber-Erkennung ist
 hier bewusst **nicht** relevant (siehe Reiter "Neukunden" weiter unten).
+Dieser Reiter nutzt deshalb an keiner Stelle einen Browser/Playwright - nur
+die leichtgewichtige statische Analyse (`requests`/BeautifulSoup) - und
+läuft dadurch auch mit sehr großen Listen (1000+ Unternehmen) zuverlässig
+auch auf speicherbegrenztem Hosting (z.B. Streamlit Community Cloud),
+ohne die Deep-Detection-Checkbox im Reiter "Neukunden" zu benötigen.
 
 **Eigener Upload:** "Bestandskundenliste hochladen" - dieselbe HubSpot-Excel-
 Struktur wie bisher (Unternehmensname, Unternehmensdomain, Ort, Zimmeranzahl,
