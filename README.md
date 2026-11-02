@@ -472,6 +472,11 @@ Bestandskunden priorisieren."
 **Zentrale Frage:** Welche zusätzlichen DIRS21-Produkte besitzen bei diesem
 bestehenden Kunden echtes Cross-Selling-Potenzial? Mitbewerber-Erkennung ist
 hier bewusst **nicht** relevant (siehe Reiter "Neukunden" weiter unten).
+Dieser Reiter nutzt deshalb an keiner Stelle einen Browser/Playwright - nur
+die leichtgewichtige statische Analyse (`requests`/BeautifulSoup) - und
+läuft dadurch auch mit sehr großen Listen (1000+ Unternehmen) zuverlässig
+auch auf speicherbegrenztem Hosting (z.B. Streamlit Community Cloud),
+ohne die Deep-Detection-Checkbox im Reiter "Neukunden" zu benötigen.
 
 **Eigener Upload:** "Bestandskundenliste hochladen" - dieselbe HubSpot-Excel-
 Struktur wie bisher (Unternehmensname, Unternehmensdomain, Ort, Zimmeranzahl,
@@ -646,6 +651,23 @@ mehreren kleineren Durchläufen (z.B. je 150-250 Unternehmen) zu analysieren
 und die Ergebnisse jeweils zu exportieren, statt alle auf einmal - das
 hochgeladene Excel muss dafür NICHT in mehrere Dateien aufgeteilt werden,
 die Mengenbegrenzung/der Ausschluss-Multiselect wirken auf dieselbe Liste.
+
+**Deep-Detection abschalten bei speicherbegrenztem Hosting (z.B. Streamlit
+Community Cloud):** die kostenlose Streamlit Community Cloud begrenzt eine
+App auf ca. 1 GB RAM. Ein echter Chromium-Prozess benötigt - selbst mit
+allen oben genannten Optimierungen - für viele unterschiedliche, teils
+medienlastige reale Websites in Summe spürbar Arbeitsspeicher und kann auf
+einem derart knappen Limit bei sehr großen Listen weiterhin zu Abbrüchen
+führen. Im Reiter "Neukunden" gibt es deshalb die Checkbox "Erweiterte
+Browser-Prüfung (Deep-Detection) für unklare Fälle aktivieren" direkt über
+dem Analysieren-Button - bei wiederholten Abbrüchen auf speicherbegrenztem
+Hosting hier deaktivieren. Die Analyse läuft dann ausschließlich mit der
+schnellen, sehr ressourcenschonenden statischen Erkennung (Stufe 1, siehe
+oben) - ganz ohne Browser-Prozess, dadurch praktisch unbegrenzt
+batch-fähig, allerdings mit etwas mehr False Negatives bei Booking
+Engines, die ausschließlich per JavaScript eingebunden sind. Die Checkbox
+wirkt nur für den jeweiligen Analyse-Lauf und verändert `config.yaml`
+nicht.
 
 **Fokus-Mitbewerber** (`knowledge/competitors.yaml` ->
 `sales_relevance.focus_competitor: true`): Seekda, HotelNetSolutions,

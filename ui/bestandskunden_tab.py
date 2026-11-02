@@ -295,6 +295,14 @@ def render_bestandskunden_tab(config: dict) -> None:
         progress_bar = st.progress(0.0)
         status_line = st.empty()
         rows = []
+        # Zwischenstand nach JEDEM Unternehmen sofort in den Session-State
+        # schreiben (analog zu ui/neukunden_tab.py, siehe Auftrag "Analyse
+        # bricht ohne Ergebnisse ab") - vorher wurde das Ergebnis erst nach
+        # der kompletten Schleife gespeichert, wodurch ein Abbruch bei sehr
+        # großen Listen ALLE bereits analysierten Unternehmen verworfen hat.
+        # Eigener Session-State - überschreibt NIEMALS die Neukunden-
+        # Ergebnisse.
+        st.session_state["bestand_results_df"] = rows
         for i, company in enumerate(selected, start=1):
             name = company.get("hotel_name") or "(unbekannt)"
 
@@ -309,12 +317,10 @@ def render_bestandskunden_tab(config: dict) -> None:
                 row["pruefhinweis"] = f"Analyse fehlgeschlagen: {exc}"
                 row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
             rows.append(row)
+            st.session_state["bestand_results_df"] = rows
             progress_bar.progress(i / total)
         status_line.empty()
         progress_bar.empty()
-        # Eigener Session-State (siehe Auftrag Abschnitt 44) - überschreibt
-        # NIEMALS die Neukunden-Ergebnisse.
-        st.session_state["bestand_results_df"] = rows
 
     if "bestand_results_df" not in st.session_state or not st.session_state["bestand_results_df"]:
         return
