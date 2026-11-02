@@ -49,6 +49,20 @@ gestartet. shutdown_shared_browser() MUSS vom Aufrufer (siehe
 logic/pipeline_neukunden.py/logic/pipeline.py) nach Abschluss eines
 kompletten Analyse-Laufs aufgerufen werden, damit kein Browser-Prozess
 untätig im Hintergrund weiterläuft.
+
+WEITERE ABSICHERUNGEN GEGEN ABBRÜCHE BEI SEHR GROSSEN LISTEN: echte Hotel-
+Websites sind oft deutlich "schwerer" (große Bilder, Video-Hintergründe,
+Tracking-/Chat-Skripte, Kartenwidgets) als einfache Test-Seiten und
+belasten selbst einen wiederverwendeten Browser-Prozess über viele
+verschiedene Domains hinweg stärker. Deshalb zusätzlich:
+  - Bilder/Videos/Fonts/Stylesheets werden auf Kontextebene blockiert
+    (siehe _block_heavy_resources/BLOCKED_RESOURCE_TYPES) - für die
+    technische Erkennung wird nur DOM/Links/Scripts/Formulare benötigt,
+    nie das visuelle Erscheinungsbild.
+  - Ressourcenschonende Chromium-Start-Flags (siehe CHROMIUM_LAUNCH_ARGS),
+    insbesondere --disable-dev-shm-usage gegen Abstürze in Containern mit
+    kleinem /dev/shm.
+  - MAX_CONTEXTS_PER_BROWSER bewusst konservativ gewählt.
 """
 
 import glob
@@ -62,8 +76,37 @@ MAX_BUTTON_CANDIDATES = 4
 # Vorsorglicher Neustart des wiederverwendeten Browser-Prozesses nach so
 # vielen Unternehmen (siehe Moduldocstring "Browser-Wiederverwendung") -
 # rein defensiv gegen einen langsamen internen Speicherzuwachs über sehr
-# viele Kontexte hinweg.
-MAX_CONTEXTS_PER_BROWSER = 150
+# viele Kontexte hinweg. Bewusst konservativ (deutlich niedriger als rein
+# technisch nötig wäre), weil reale Hotel-Websites (Video-Hintergründe,
+# große Bilder, Tracking-/Chat-Skripte, Kartenwidgets) erheblich schwerer
+# sind als einfache Test-Seiten und den Browser-Prozess schneller belasten.
+MAX_CONTEXTS_PER_BROWSER = 60
+
+# Ressourcentypen, die beim Rendern blockiert werden (siehe
+# _block_heavy_resources) - für die technische Erkennung wird nur das
+# DOM/die Links/Scripts benötigt, NIEMALS das visuelle Erscheinungsbild.
+# Bilder/Videos/Fonts/Stylesheets einer echten Hotel-Website machen den
+# weit überwiegenden Teil des Speicher- und Netzwerk-Aufwands aus, tragen
+# zur Erkennung aber nichts bei - deshalb werden sie gar nicht erst
+# geladen (siehe Auftrag "Analyse großer Listen bricht ab").
+BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
+
+# Ressourcenschonende Chromium-Start-Flags (siehe Auftrag "Analyse großer
+# Listen bricht ab") - insbesondere --disable-dev-shm-usage ist eine in
+# Containern/CI häufig notwendige Absicherung, da Chromium sonst am
+# (dort oft sehr kleinen) /dev/shm abstürzen kann. --no-sandbox wird
+# bewusst NICHT standardmäßig gesetzt (Sicherheitsabwägung beim Besuch
+# fremder Websites) - nur wenn die Umgebungsvariable
+# DIRS21_CHROMIUM_NO_SANDBOX gesetzt ist (z.B. weil der Host zwingend
+# als root ohne funktionierende Sandbox läuft).
+CHROMIUM_LAUNCH_ARGS = [
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-breakpad",
+    "--mute-audio",
+]
 
 # Buchungs-EINSTIEGSPUNKTE (siehe Auftrag Abschnitt "Stufe 3") - bewusst
 # anbieterunabhängige, generische Buchungs-Vokabel, KEINE Anfrage-Vokabel
@@ -140,11 +183,19 @@ def _find_prestaged_chromium_executable():
     return candidates[0] if candidates else None
 
 
+def _chromium_launch_args() -> list:
+    args = list(CHROMIUM_LAUNCH_ARGS)
+    if os.environ.get("DIRS21_CHROMIUM_NO_SANDBOX"):
+        args.append("--no-sandbox")
+    return args
+
+
 def _launch_browser(p):
     executable_path = _find_prestaged_chromium_executable()
+    launch_args = _chromium_launch_args()
     if executable_path and os.path.exists(executable_path):
-        return p.chromium.launch(executable_path=executable_path)
-    return p.chromium.launch()
+        return p.chromium.launch(executable_path=executable_path, args=launch_args)
+    return p.chromium.launch(args=launch_args)
 
 
 # Wiederverwendeter Playwright-Treiber/Browser-Prozess über mehrere
@@ -286,6 +337,24 @@ def _candidate_href(locator) -> str:
         return ""
 
 
+def _block_heavy_resources(context) -> None:
+    """Blockiert Bilder/Videos/Fonts/Stylesheets auf Kontextebene (siehe
+    BLOCKED_RESOURCE_TYPES) - reduziert Speicher-/Netzwerkbedarf echter,
+    medienlastiger Hotel-Websites drastisch, ohne die technische Erkennung
+    zu beeinträchtigen (DOM/Links/Scripts/Formulare bleiben unverändert
+    sichtbar). Schlägt das Einrichten fehl, läuft die Analyse unverändert
+    weiter (nie ein Abbruch)."""
+    try:
+        context.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in BLOCKED_RESOURCE_TYPES
+            else route.continue_(),
+        )
+    except Exception:
+        pass
+
+
 def _relevant_network_domains(network_requests) -> list:
     domains = set()
     for resource_type, req_url in network_requests:
@@ -348,6 +417,7 @@ def _run_booking_flow(url: str, nav_timeout_ms: int, click_timeout_ms: int, sett
                 result["detection_failure_reason"] = f"Browser konnte nicht gestartet werden: {exc2.__class__.__name__}"
                 return result
 
+        _block_heavy_resources(context)
         context.set_default_timeout(click_timeout_ms)
         page = context.new_page()
 

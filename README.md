@@ -626,6 +626,27 @@ Browser-Prozess nach `MAX_CONTEXTS_PER_BROWSER` Unternehmen (siehe
 `logic/booking_flow_detection.py`) vorsorglich neu gestartet, und am Ende
 jedes Analyse-Laufs (Webapp-Button, `analyze.py`) vollständig beendet.
 
+**Zusätzliche Absicherungen für sehr große/medienlastige Listen:** echte
+Hotel-Websites sind oft deutlich "schwerer" (große Bilder, Video-
+Hintergründe, Tracking-/Chat-Skripte) als einfache Seiten und belasten
+selbst einen wiederverwendeten Browser-Prozess stärker. Deshalb werden
+Bilder/Videos/Fonts/Stylesheets beim Rendern gar nicht erst geladen (für
+die technische Erkennung wird nur DOM/Links/Scripts/Formulare benötigt),
+ressourcenschonende Chromium-Start-Flags gesetzt (u.a.
+`--disable-dev-shm-usage` gegen Abstürze in Containern mit kleinem
+`/dev/shm`) und der Browser-Prozess häufiger vorsorglich neu gestartet.
+**Zwischenergebnisse gehen bei einem Abbruch nicht mehr komplett verloren:**
+im Reiter "Neukunden" wird das Ergebnis nach JEDEM Unternehmen sofort
+gespeichert (nicht erst nach Abschluss der gesamten Liste) - bricht die
+Analyse z.B. bei Unternehmen 900 von 1000 ab, bleiben die ersten 899
+Ergebnisse erhalten und exportierbar, sofern die Webapp-Sitzung selbst
+weiterläuft. Bei sehr großen Listen (mehrere hundert Unternehmen) empfiehlt
+es sich dennoch, über "Maximale Anzahl zu analysierender Unternehmen" in
+mehreren kleineren Durchläufen (z.B. je 150-250 Unternehmen) zu analysieren
+und die Ergebnisse jeweils zu exportieren, statt alle auf einmal - das
+hochgeladene Excel muss dafür NICHT in mehrere Dateien aufgeteilt werden,
+die Mengenbegrenzung/der Ausschluss-Multiselect wirken auf dieselbe Liste.
+
 **Fokus-Mitbewerber** (`knowledge/competitors.yaml` ->
 `sales_relevance.focus_competitor: true`): Seekda, HotelNetSolutions,
 SiteMinder, Mews, vioma, Viato - im Vertrieb besonders häufig relevant.
