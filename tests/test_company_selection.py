@@ -80,15 +80,24 @@ class TestRenderCompanySelection(unittest.TestCase):
         at = AppTest.from_file(self.script_path)
         at.run(timeout=30)
         at.multiselect(key="test_exclude").set_value([0]).run(timeout=30)
-        at.selectbox(key="test_limit").set_value("5").run(timeout=30)
+        at.number_input(key="test_limit").set_value(2).run(timeout=30)
         self.assertEqual(len(at.exception), 0, msg=f"Unerwartete Exceptions: {list(at.exception)}")
-        # "5" als Obergrenze bei nur noch 3 verbleibenden Unternehmen -> alle 3.
-        self.assertEqual(at.session_state["_selected_count"], 3)
+        # Eigene Zahl "2" bei nur noch 3 verbleibenden Unternehmen -> 2.
+        self.assertEqual(at.session_state["_selected_count"], 2)
 
-    def test_standard_limit_dropdown_zeigt_alle_an(self):
+    def test_beliebige_eigene_zahl_wird_akzeptiert(self):
+        # Auftrag "eine von mir gewünschte Zahl eingeben können" - nicht nur
+        # feste Stufen (5/10/20/50/Alle), sondern jede Zahl bis zur Gesamtzahl.
         at = AppTest.from_file(self.script_path)
         at.run(timeout=30)
-        self.assertEqual(at.selectbox(key="test_limit").value, "Alle")
+        at.number_input(key="test_limit").set_value(3).run(timeout=30)
+        self.assertEqual(len(at.exception), 0, msg=f"Unerwartete Exceptions: {list(at.exception)}")
+        self.assertEqual(at.session_state["_selected_count"], 3)
+
+    def test_standard_limit_zeigt_volle_anzahl_an(self):
+        at = AppTest.from_file(self.script_path)
+        at.run(timeout=30)
+        self.assertEqual(at.number_input(key="test_limit").value, 4)
 
     def test_leere_liste_crasht_nicht(self):
         script_path = os.path.join(os.path.dirname(__file__), "_tmp_company_selection_empty.py")

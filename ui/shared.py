@@ -160,13 +160,6 @@ def safe_series(df: pd.DataFrame, column: str) -> pd.Series:
     return pd.Series([""] * len(df), index=df.index, dtype=object)
 
 
-# Mengenbegrenzung für die Analyse einer hochgeladenen Liste (siehe
-# render_company_selection) - "Alle" ist bewusst die letzte Option, damit
-# sie als Standard ausgewählt werden kann (siehe Auftrag "alle Hotels
-# analysieren, außer explizit ausgeschlossen").
-LIMIT_OPTIONS = ["5", "10", "20", "50", "Alle"]
-
-
 def _company_selection_label(index: int, company: dict) -> str:
     name = company.get("hotel_name") or f"(ohne Namen, Zeile {company.get('zeilennummer', index + 2)})"
     website = company.get("website")
@@ -184,8 +177,12 @@ def render_company_selection(companies: list, key_prefix: str) -> list:
     Liste analysiert - weder ein impliziter Zahlen-Deckel noch eine
     automatische Auswahl. Ein Ausschluss einzelner Unternehmen oder eine
     Mengenbegrenzung muss immer eine EXPLIZITE, sichtbare Entscheidung in
-    der Webapp sein (Multiselect bzw. Dropdown unten, beide standardmäßig
-    "alle einschließen"/"Alle").
+    der Webapp sein (Multiselect bzw. freie Zahleneingabe unten, beide
+    standardmäßig "alle einschließen"). Die Mengenbegrenzung ist bewusst
+    eine freie Zahleneingabe (st.number_input) statt einer festen
+    Auswahlliste, damit z.B. bei sehr großen Listen beliebige eigene
+    Batch-Größen (250, 300, ...) möglich sind, nicht nur ein paar feste
+    Stufen (siehe Auftrag "eine von mir gewünschte Zahl eingeben können").
 
     Die Auswahl im Multiselect erfolgt über den Listenindex (nicht den
     Namen), damit zwei Unternehmen mit zufällig identischem Namen korrekt
@@ -214,15 +211,26 @@ def render_company_selection(companies: list, key_prefix: str) -> list:
     if excluded:
         st.caption(f"ℹ️ {len(excluded)} von {len(companies)} Unternehmen von dieser Analyse ausgeschlossen.")
 
-    limit_choice = st.selectbox(
+    if not remaining:
+        return []
+
+    # Freie Zahleneingabe (siehe Auftrag "eine von mir gewünschte Zahl
+    # eingeben können") statt einer festen Auswahlliste - Standardwert ist
+    # IMMER die volle Anzahl der verbleibenden Unternehmen (= "Alle"), eine
+    # Begrenzung muss weiterhin eine explizite, selbst gewählte Zahl sein.
+    limit = st.number_input(
         "Maximale Anzahl zu analysierender Unternehmen",
-        LIMIT_OPTIONS,
-        index=len(LIMIT_OPTIONS) - 1,  # Standard: "Alle"
+        min_value=1,
+        max_value=len(remaining),
+        value=len(remaining),
+        step=1,
         key=f"{key_prefix}_limit",
-        help="Standard 'Alle': alle (nicht ausgeschlossenen) Unternehmen der Liste werden analysiert.",
+        help=(
+            "Standard: alle (nicht ausgeschlossenen) Unternehmen der Liste. Für mehrere kleinere "
+            "Durchläufe bei sehr großen Listen hier eine beliebige eigene Zahl eingeben, z.B. 250."
+        ),
     )
-    limit = len(remaining) if limit_choice == "Alle" else min(int(limit_choice), len(remaining))
-    return remaining[:limit]
+    return remaining[: int(limit)]
 
 
 def detail_field(label: str, value) -> None:
