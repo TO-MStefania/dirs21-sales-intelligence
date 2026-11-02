@@ -21,7 +21,13 @@ import http.server
 import threading
 import unittest
 
-from logic.booking_flow_detection import analyze_booking_flow, clear_cache, is_playwright_available
+import logic.booking_flow_detection as booking_flow_detection
+from logic.booking_flow_detection import (
+    analyze_booking_flow,
+    clear_cache,
+    is_playwright_available,
+    shutdown_shared_browser,
+)
 
 PLAYWRIGHT_READY = is_playwright_available()
 
@@ -58,6 +64,9 @@ def _start_server(pages: dict, port: int):
 class TestAnalyzeBookingFlowMitEchtemBrowser(unittest.TestCase):
     def setUp(self):
         clear_cache()
+
+    def tearDown(self):
+        shutdown_shared_browser()
 
     def test_direkte_navigation_beim_klick_wird_als_redirect_erkannt(self):
         pages = {
@@ -133,7 +142,7 @@ class TestAnalyzeBookingFlowMitEchtemBrowser(unittest.TestCase):
         self.assertIsInstance(result, dict)
         self.assertTrue(result["detection_failure_reason"])
 
-    def test_cache_liefert_gleiches_ergebnisobjekt_ohne_erneuten_seitenaufruf(self):
+    def test_cache_liefert_ergebnis_ohne_erneuten_seitenaufruf(self):
         pages = {"/": b"<html><body><p>Keine Buchung.</p></body></html>"}
         server = _start_server(pages, 8814)
         try:
@@ -141,7 +150,78 @@ class TestAnalyzeBookingFlowMitEchtemBrowser(unittest.TestCase):
             second = analyze_booking_flow("http://127.0.0.1:8814/", use_cache=True)
         finally:
             _stop_server(server)
-        self.assertIs(first, second)
+        self.assertEqual(first["detection_failure_reason"], second["detection_failure_reason"])
+        self.assertEqual(first["final_url"], second["final_url"])
+        # Der Cache hält das vollständig gerenderte HTML NICHT auf - nur für
+        # den jeweils aktuellen Aufruf benötigt (siehe Moduldocstring
+        # "Browser-Wiederverwendung bei großen Listen").
+        self.assertEqual(second["rendered_pages"], {})
+
+    def test_browser_prozess_wird_ueber_mehrere_aufrufe_wiederverwendet(self):
+        pages = {"/": b"<html><body><p>Keine Buchung.</p></body></html>"}
+        server = _start_server(pages, 8815)
+        try:
+            analyze_booking_flow("http://127.0.0.1:8815/", use_cache=False)
+            browser_after_first = booking_flow_detection._shared_browser
+            analyze_booking_flow("http://127.0.0.1:8815/", use_cache=False)
+            browser_after_second = booking_flow_detection._shared_browser
+        finally:
+            _stop_server(server)
+            shutdown_shared_browser()
+
+        self.assertIsNotNone(browser_after_first)
+        self.assertIs(browser_after_first, browser_after_second)
+
+    def test_shutdown_schliesst_browser_und_naechster_aufruf_startet_sauber_neu(self):
+        pages = {"/": b"<html><body><p>Keine Buchung.</p></body></html>"}
+        server = _start_server(pages, 8816)
+        try:
+            analyze_booking_flow("http://127.0.0.1:8816/", use_cache=False)
+            self.assertIsNotNone(booking_flow_detection._shared_browser)
+
+            shutdown_shared_browser()
+            self.assertIsNone(booking_flow_detection._shared_browser)
+
+            result = analyze_booking_flow("http://127.0.0.1:8816/", use_cache=False)
+            # Keine Buchungsseite auf dieser Fixture -> "Kein eindeutiger
+            # Buchungsbutton gefunden" ist das erwartete, normale Ergebnis;
+            # entscheidend ist hier NUR, dass der Browser sauber neu
+            # gestartet werden konnte (kein technischer Fehler).
+            self.assertNotIn("Browser konnte nicht gestartet werden", result["detection_failure_reason"])
+            self.assertNotIn("Technischer Fehler", result["detection_failure_reason"])
+            self.assertIsNotNone(booking_flow_detection._shared_browser)
+        finally:
+            _stop_server(server)
+            shutdown_shared_browser()
+
+    def test_periodischer_sicherheits_neustart_nach_max_contexts(self):
+        pages = {"/": b"<html><body><p>Keine Buchung.</p></body></html>"}
+        server = _start_server(pages, 8817)
+        try:
+            analyze_booking_flow("http://127.0.0.1:8817/", use_cache=False)
+            browser_before = booking_flow_detection._shared_browser
+            self.assertIsNotNone(browser_before)
+
+            # Zähler knapp unter die Schwelle setzen, damit der AKTUELLE
+            # Aufruf den vorsorglichen Neustart auslöst (siehe
+            # MAX_CONTEXTS_PER_BROWSER) - ohne wirklich hunderte echte
+            # Browser-Kontexte öffnen zu müssen. Der Neustart schließt den
+            # Browser NACH diesem Aufruf; der übernächste Aufruf startet
+            # ihn dann sauber neu.
+            booking_flow_detection._contexts_since_restart = (
+                booking_flow_detection.MAX_CONTEXTS_PER_BROWSER - 1
+            )
+            analyze_booking_flow("http://127.0.0.1:8817/", use_cache=False)
+            self.assertIsNone(booking_flow_detection._shared_browser)
+
+            analyze_booking_flow("http://127.0.0.1:8817/", use_cache=False)
+            browser_after_restart = booking_flow_detection._shared_browser
+
+            self.assertIsNotNone(browser_after_restart)
+            self.assertIsNot(browser_before, browser_after_restart)
+        finally:
+            _stop_server(server)
+            shutdown_shared_browser()
 
 
 class TestOhneEchtenBrowser(unittest.TestCase):

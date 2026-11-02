@@ -11,6 +11,8 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from logic.booking_flow_detection import clear_cache as clear_booking_flow_cache
+from logic.booking_flow_detection import shutdown_shared_browser
 from logic.excel_import import ExcelImportError, read_companies
 from logic.exporter import export_neukunden_excel_bytes
 from logic.pipeline_neukunden import (
@@ -424,21 +426,31 @@ def render_neukunden_tab(config: dict) -> None:
         progress_bar = st.progress(0.0)
         status_line = st.empty()
         rows = []
-        for i, company in enumerate(selected, start=1):
-            name = company.get("hotel_name") or "(unbekannt)"
+        # Deep-Detection-Cache zu Beginn jedes Analyse-Laufs leeren (siehe
+        # logic/booking_flow_detection.py) - ein Browser-Prozess wird für
+        # den gesamten Lauf wiederverwendet und am Ende IMMER beendet
+        # (try/finally), damit bei sehr großen Listen (siehe Fehlerbild
+        # "Abbruch nach ca. 150 von ca. 1000 Unternehmen") weder der
+        # Browser-Prozess noch der HTML-Cache unbegrenzt Ressourcen binden.
+        clear_booking_flow_cache()
+        try:
+            for i, company in enumerate(selected, start=1):
+                name = company.get("hotel_name") or "(unbekannt)"
 
-            def _on_step(step, i=i, total=total, name=name):
-                status_line.info(f"**{i} / {total}** — {name} — {step}")
+                def _on_step(step, i=i, total=total, name=name):
+                    status_line.info(f"**{i} / {total}** — {name} — {step}")
 
-            try:
-                row = analyze_neukunde(company, config, progress_callback=_on_step)
-            except Exception as exc:
-                row = {col: "" for col in APP_COLUMNS_NEUKUNDEN}
-                row["hotel_name"] = name
-                row["pruefhinweis"] = f"Analyse fehlgeschlagen: {exc}"
-                row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            rows.append(row)
-            progress_bar.progress(i / total)
+                try:
+                    row = analyze_neukunde(company, config, progress_callback=_on_step)
+                except Exception as exc:
+                    row = {col: "" for col in APP_COLUMNS_NEUKUNDEN}
+                    row["hotel_name"] = name
+                    row["pruefhinweis"] = f"Analyse fehlgeschlagen: {exc}"
+                    row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                rows.append(row)
+                progress_bar.progress(i / total)
+        finally:
+            shutdown_shared_browser()
         status_line.empty()
         progress_bar.empty()
         # Eigener Session-State (siehe Auftrag Abschnitt 44) - überschreibt

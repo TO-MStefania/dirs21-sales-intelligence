@@ -30,6 +30,8 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+from logic.booking_flow_detection import clear_cache as clear_booking_flow_cache
+from logic.booking_flow_detection import shutdown_shared_browser
 from logic.excel_import import ExcelImportError, read_companies
 from logic.exporter import export_to_excel_file
 from logic.pipeline import RESULT_COLUMNS, analyze_company
@@ -95,30 +97,39 @@ def main():
     print(f"Ergebnis wird gespeichert unter: {output_path}\n")
 
     rows = []
-    for i, company in enumerate(companies, start=1):
-        name = company.get("hotel_name") or "(unbekannt)"
-        print(f"[{i}/{total}] {name} wird analysiert...")
+    # Deep-Detection-Cache zu Beginn des Laufs leeren und den wiederverwendeten
+    # Browser-Prozess am Ende IMMER beenden (siehe logic/booking_flow_detection.py)
+    # - verhindert, dass bei sehr großen Listen Browser-Prozess oder HTML-Cache
+    # unbegrenzt Ressourcen binden (siehe Fehlerbild "Abbruch nach ca. 150 von
+    # ca. 1000 Unternehmen").
+    clear_booking_flow_cache()
+    try:
+        for i, company in enumerate(companies, start=1):
+            name = company.get("hotel_name") or "(unbekannt)"
+            print(f"[{i}/{total}] {name} wird analysiert...")
 
-        try:
-            row = analyze_company(company, config)
-        except Exception as exc:
-            # Sollte durch die Fehlerbehandlung in analyze_company praktisch
-            # nie auftreten - Sicherheitsnetz, damit die Analyse trotzdem
-            # weiterläuft und kein Unternehmen die Gesamtverarbeitung stoppt.
-            row = {col: "" for col in RESULT_COLUMNS}
-            row["hotel_name"] = name
-            row["website"] = company.get("website", "")
-            row["crawler_status"] = f"Fehler bei Analyse: {exc}"
-            row["pruefhinweis"] = "Analyse fehlgeschlagen - manuelle Prüfung nötig."
-            row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            print(f"    Fehler: {exc}")
+            try:
+                row = analyze_company(company, config)
+            except Exception as exc:
+                # Sollte durch die Fehlerbehandlung in analyze_company praktisch
+                # nie auftreten - Sicherheitsnetz, damit die Analyse trotzdem
+                # weiterläuft und kein Unternehmen die Gesamtverarbeitung stoppt.
+                row = {col: "" for col in RESULT_COLUMNS}
+                row["hotel_name"] = name
+                row["website"] = company.get("website", "")
+                row["crawler_status"] = f"Fehler bei Analyse: {exc}"
+                row["pruefhinweis"] = "Analyse fehlgeschlagen - manuelle Prüfung nötig."
+                row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                print(f"    Fehler: {exc}")
 
-        rows.append(row)
+            rows.append(row)
 
-        if i % save_interval == 0 or i == total:
-            df = pd.DataFrame(rows, columns=RESULT_COLUMNS)
-            export_to_excel_file(df, output_path)
-            print(f"    Zwischenstand gespeichert ({i}/{total}).")
+            if i % save_interval == 0 or i == total:
+                df = pd.DataFrame(rows, columns=RESULT_COLUMNS)
+                export_to_excel_file(df, output_path)
+                print(f"    Zwischenstand gespeichert ({i}/{total}).")
+    finally:
+        shutdown_shared_browser()
 
     print(f"\nFertig: {total} Unternehmen analysiert.")
     print(f"Ergebnisdatei: {output_path}")
