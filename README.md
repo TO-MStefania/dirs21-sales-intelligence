@@ -612,6 +612,20 @@ zeigt "Erkannt durch: ..." sowie einen eingeklappten Debug-Bereich
 Buchungsbuttons, Klick erfolgreich?, Popup-/Redirect-/iFrame-/Netzwerk-
 Domains, Grund für ein nicht eindeutiges Ergebnis).
 
+**Browser-Wiederverwendung bei großen Listen:** EIN Chromium-Prozess wird
+für den gesamten Analyse-Lauf wiederverwendet (nur ein leichtgewichtiger
+Browser-Kontext wird pro Unternehmen geöffnet/geschlossen) statt pro
+Unternehmen einen komplett neuen Browser zu starten/zu beenden - das war
+die Ursache dafür, dass Analysen sehr großer Listen (mehrere hundert
+Unternehmen) nach einiger Zeit undefiniert abbrachen (Browser-Start ist der
+mit Abstand teuerste Analyseschritt; mehrere hundert volle Starts/Stopps in
+einem Lauf erschöpften Arbeitsspeicher/Prozess-Handles des Hosts, was zu
+einem OS-seitigen Abbruch des gesamten Prozesses führte, ohne dass Python
+selbst einen Fehler werfen konnte). Als zusätzliche Absicherung wird der
+Browser-Prozess nach `MAX_CONTEXTS_PER_BROWSER` Unternehmen (siehe
+`logic/booking_flow_detection.py`) vorsorglich neu gestartet, und am Ende
+jedes Analyse-Laufs (Webapp-Button, `analyze.py`) vollständig beendet.
+
 **Fokus-Mitbewerber** (`knowledge/competitors.yaml` ->
 `sales_relevance.focus_competitor: true`): Seekda, HotelNetSolutions,
 SiteMinder, Mews, vioma, Viato - im Vertrieb besonders häufig relevant.

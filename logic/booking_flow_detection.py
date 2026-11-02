@@ -27,6 +27,28 @@ jedem Fehler (fehlendes Playwright, fehlender Browser, Timeout, Absturz
 einer Einzelseite, ...) ein robustes, NIE werdendes Ergebnis mit
 detection_failure_reason - ein einzelnes Hotel darf nie einen kompletten
 Analyse-Batch abbrechen (siehe Auftrag Abschnitt 20).
+
+BROWSER-WIEDERVERWENDUNG BEI GROSSEN LISTEN (siehe Fehlerbild "Analyse
+bricht nach ca. 150 von ca. 1000 Unternehmen ab"): früher wurde pro
+Unternehmen ein komplett NEUER Playwright-Treiberprozess UND ein neuer
+Chromium-Prozess gestartet und danach wieder beendet - bei mehreren
+hundert Unternehmen mit unklarem Stufe-1-Ergebnis entspricht das mehreren
+hundert vollständigen Browser-Starts/-Stopps in einem einzigen Analyse-
+Lauf. Das ist nicht nur langsam, sondern erschöpft nach einiger Zeit
+Arbeitsspeicher/Prozess-Handles des Hosts (Browser-Start ist mit Abstand
+der teuerste Schritt der gesamten Analyse) - der Prozess wird dann vom
+Betriebssystem beendet (OOM), was sich wie ein undefinierter Abbruch der
+gesamten Analyse zeigt, ohne dass Python selbst einen Fehler werfen oder
+abfangen kann. Deshalb wird jetzt EIN Chromium-Prozess für den gesamten
+Analyse-Lauf wiederverwendet (siehe _get_shared_browser/
+shutdown_shared_browser) - pro Unternehmen wird nur noch ein leichtgewichtiger
+Browser-KONTEXT geöffnet und wieder geschlossen. Als zusätzliche
+Absicherung gegen einen langsamen internen Speicherzuwachs wird der
+Browser-Prozess nach MAX_CONTEXTS_PER_BROWSER Unternehmen vorsorglich neu
+gestartet. shutdown_shared_browser() MUSS vom Aufrufer (siehe
+logic/pipeline_neukunden.py/logic/pipeline.py) nach Abschluss eines
+kompletten Analyse-Laufs aufgerufen werden, damit kein Browser-Prozess
+untätig im Hintergrund weiterläuft.
 """
 
 import glob
@@ -37,6 +59,11 @@ DEFAULT_NAV_TIMEOUT_MS = 12000
 DEFAULT_CLICK_TIMEOUT_MS = 3000
 DEFAULT_SETTLE_TIMEOUT_MS = 4000
 MAX_BUTTON_CANDIDATES = 4
+# Vorsorglicher Neustart des wiederverwendeten Browser-Prozesses nach so
+# vielen Unternehmen (siehe Moduldocstring "Browser-Wiederverwendung") -
+# rein defensiv gegen einen langsamen internen Speicherzuwachs über sehr
+# viele Kontexte hinweg.
+MAX_CONTEXTS_PER_BROWSER = 150
 
 # Buchungs-EINSTIEGSPUNKTE (siehe Auftrag Abschnitt "Stufe 3") - bewusst
 # anbieterunabhängige, generische Buchungs-Vokabel, KEINE Anfrage-Vokabel
@@ -118,6 +145,77 @@ def _launch_browser(p):
     if executable_path and os.path.exists(executable_path):
         return p.chromium.launch(executable_path=executable_path)
     return p.chromium.launch()
+
+
+# Wiederverwendeter Playwright-Treiber/Browser-Prozess über mehrere
+# analyze_booking_flow()-Aufrufe hinweg (siehe Moduldocstring "Browser-
+# Wiederverwendung bei großen Listen"). Modul-globaler Zustand ist hier
+# bewusst - die Deep-Detection läuft ohnehin nie parallel für mehrere
+# Unternehmen (ein Analyse-Lauf arbeitet die Liste sequenziell ab).
+_shared_playwright = None
+_shared_browser = None
+_contexts_since_restart = 0
+
+
+def _get_shared_browser():
+    """Liefert einen wiederverwendeten, bereits laufenden Chromium-Prozess -
+    startet ihn beim ersten Aufruf bzw. nach shutdown_shared_browser()/einem
+    Verbindungsabbruch neu. Wirft bei einem Startfehler (Playwright/Browser
+    fehlt) - der Aufrufer fängt das ab (siehe _run_booking_flow)."""
+    global _shared_playwright, _shared_browser, _contexts_since_restart
+
+    if _shared_browser is not None:
+        try:
+            if _shared_browser.is_connected():
+                return _shared_browser
+        except Exception:
+            pass
+        _shutdown_shared_browser_quietly()
+
+    from playwright.sync_api import sync_playwright
+
+    if _shared_playwright is None:
+        _shared_playwright = sync_playwright().start()
+    _shared_browser = _launch_browser(_shared_playwright)
+    _contexts_since_restart = 0
+    return _shared_browser
+
+
+def _shutdown_shared_browser_quietly() -> None:
+    global _shared_playwright, _shared_browser
+    if _shared_browser is not None:
+        try:
+            _shared_browser.close()
+        except Exception:
+            pass
+        _shared_browser = None
+    if _shared_playwright is not None:
+        try:
+            _shared_playwright.stop()
+        except Exception:
+            pass
+        _shared_playwright = None
+
+
+def shutdown_shared_browser() -> None:
+    """Beendet den wiederverwendeten Browser-/Treiberprozess (falls einer
+    läuft). MUSS vom Aufrufer nach Abschluss eines kompletten Analyse-Laufs
+    aufgerufen werden (siehe logic/pipeline_neukunden.py, logic/pipeline.py),
+    damit kein Browser-Prozess untätig im Hintergrund weiterläuft und
+    Arbeitsspeicher belegt. Wirft nie, auch wenn gar kein Browser läuft."""
+    global _contexts_since_restart
+    _shutdown_shared_browser_quietly()
+    _contexts_since_restart = 0
+
+
+def _note_context_used() -> None:
+    """Zählt verbrauchte Kontexte seit dem letzten Browser-Start - nach
+    MAX_CONTEXTS_PER_BROWSER wird der Browser-Prozess vorsorglich neu
+    gestartet (siehe Moduldocstring)."""
+    global _contexts_since_restart
+    _contexts_since_restart += 1
+    if _contexts_since_restart >= MAX_CONTEXTS_PER_BROWSER:
+        _shutdown_shared_browser_quietly()
 
 
 def _safe_content(page_or_popup) -> str:
@@ -216,10 +314,14 @@ def _run_booking_flow(url: str, nav_timeout_ms: int, click_timeout_ms: int, sett
     result["network_domains"] = []
     result["initial_url"] = url
 
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception:
+    if not is_playwright_available():
         result["detection_failure_reason"] = "Playwright nicht installiert/verfügbar - Deep-Detection übersprungen."
+        return result
+
+    try:
+        browser = _get_shared_browser()
+    except Exception as exc:
+        result["detection_failure_reason"] = f"Browser konnte nicht gestartet werden: {exc.__class__.__name__}"
         return result
 
     network_requests = []  # (resource_type, url) - Seite + alle Popups
@@ -230,117 +332,127 @@ def _run_booking_flow(url: str, nav_timeout_ms: int, click_timeout_ms: int, sett
         except Exception:
             pass
 
+    context = None
     try:
-        with sync_playwright() as p:
-            browser = None
+        try:
+            context = browser.new_context(ignore_https_errors=True)
+        except Exception as exc:
+            # Der wiederverwendete Browser-Prozess kann zwischenzeitlich
+            # abgestürzt/getrennt worden sein - einmalig neu starten und
+            # erneut versuchen, statt den gesamten Analyse-Lauf zu gefährden.
+            _shutdown_shared_browser_quietly()
             try:
-                browser = _launch_browser(p)
-            except Exception as exc:
-                result["detection_failure_reason"] = f"Browser konnte nicht gestartet werden: {exc.__class__.__name__}"
+                browser = _get_shared_browser()
+                context = browser.new_context(ignore_https_errors=True)
+            except Exception as exc2:
+                result["detection_failure_reason"] = f"Browser konnte nicht gestartet werden: {exc2.__class__.__name__}"
                 return result
 
+        context.set_default_timeout(click_timeout_ms)
+        page = context.new_page()
+
+        popup_pages = []
+
+        def on_popup(popup):
+            popup_pages.append(popup)
+            _track_requests(popup)
+
+        page.on("popup", on_popup)
+        _track_requests(page)
+
+        try:
+            page.goto(url, timeout=nav_timeout_ms, wait_until="domcontentloaded")
+        except Exception as exc:
+            result["detection_failure_reason"] = f"Seite konnte nicht geladen werden: {exc.__class__.__name__}"
+            return result
+
+        _accept_cookie_consent(page)
+
+        result["rendered_pages"][page.url] = _safe_content(page)
+        result["iframes_before_click"] = _collect_iframe_urls(page)
+        result["scripts_detected"] = _collect_script_srcs(page)
+
+        candidates = _find_booking_button_candidates(page)
+        for text, locator in candidates:
+            result["booking_buttons_found"].append(text)
+            result["booking_button_texts"].append(text)
+            result["booking_button_hrefs"].append(_candidate_href(locator))
+
+        if not candidates:
+            result["detection_failure_reason"] = "Kein eindeutiger Buchungsbutton gefunden."
+            result["final_url"] = page.url
+            result["network_domains"] = _relevant_network_domains(network_requests)
+            return result
+
+        initial_url = page.url
+        click_succeeded = False
+        for text, locator in candidates:
+            result["booking_click_attempted"] = True
             try:
-                context = browser.new_context(ignore_https_errors=True)
-                context.set_default_timeout(click_timeout_ms)
-                page = context.new_page()
+                locator.click(timeout=click_timeout_ms)
+            except Exception:
+                continue
+            try:
+                page.wait_for_load_state("networkidle", timeout=settle_timeout_ms)
+            except Exception:
+                pass
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
 
-                popup_pages = []
+            navigated = page.url != initial_url
+            has_popup = len(popup_pages) > 0
+            iframes_now = _collect_iframe_urls(page)
+            new_iframe = bool(set(iframes_now) - set(result["iframes_before_click"]))
 
-                def on_popup(popup):
-                    popup_pages.append(popup)
-                    _track_requests(popup)
-
-                page.on("popup", on_popup)
-                _track_requests(page)
-
-                try:
-                    page.goto(url, timeout=nav_timeout_ms, wait_until="domcontentloaded")
-                except Exception as exc:
-                    result["detection_failure_reason"] = f"Seite konnte nicht geladen werden: {exc.__class__.__name__}"
-                    return result
-
-                _accept_cookie_consent(page)
-
+            if navigated or has_popup or new_iframe:
+                click_succeeded = True
+                result["final_url"] = page.url
+                result["iframes_after_click"] = iframes_now
                 result["rendered_pages"][page.url] = _safe_content(page)
-                result["iframes_before_click"] = _collect_iframe_urls(page)
-                result["scripts_detected"] = _collect_script_srcs(page)
-
-                candidates = _find_booking_button_candidates(page)
-                for text, locator in candidates:
-                    result["booking_buttons_found"].append(text)
-                    result["booking_button_texts"].append(text)
-                    result["booking_button_hrefs"].append(_candidate_href(locator))
-
-                if not candidates:
-                    result["detection_failure_reason"] = "Kein eindeutiger Buchungsbutton gefunden."
-                    result["final_url"] = page.url
-                    result["network_domains"] = _relevant_network_domains(network_requests)
-                    return result
-
-                initial_url = page.url
-                click_succeeded = False
-                for text, locator in candidates:
-                    result["booking_click_attempted"] = True
+                if navigated:
+                    result["redirect_chain"] = [initial_url, page.url]
+                for popup in popup_pages:
                     try:
-                        locator.click(timeout=click_timeout_ms)
+                        popup.wait_for_load_state("domcontentloaded", timeout=settle_timeout_ms)
+                    except Exception:
+                        pass
+                    try:
+                        popup_url = popup.url
                     except Exception:
                         continue
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=settle_timeout_ms)
-                    except Exception:
-                        pass
-                    try:
-                        page.wait_for_timeout(500)
-                    except Exception:
-                        pass
+                    result["popup_urls"].append(popup_url)
+                    result["rendered_pages"][popup_url] = _safe_content(popup)
+                    for frame_url in _collect_iframe_urls(popup):
+                        if frame_url not in result["iframes_after_click"]:
+                            result["iframes_after_click"].append(frame_url)
+                break
 
-                    navigated = page.url != initial_url
-                    has_popup = len(popup_pages) > 0
-                    iframes_now = _collect_iframe_urls(page)
-                    new_iframe = bool(set(iframes_now) - set(result["iframes_before_click"]))
+        result["booking_click_success"] = click_succeeded
+        if not click_succeeded:
+            result["detection_failure_reason"] = (
+                "Buchungsbutton(s) gefunden und geklickt, aber keine eindeutige Navigation/Popup/"
+                "neues iFrame beobachtet."
+            )
+        if not result["final_url"]:
+            result["final_url"] = page.url
 
-                    if navigated or has_popup or new_iframe:
-                        click_succeeded = True
-                        result["final_url"] = page.url
-                        result["iframes_after_click"] = iframes_now
-                        result["rendered_pages"][page.url] = _safe_content(page)
-                        if navigated:
-                            result["redirect_chain"] = [initial_url, page.url]
-                        for popup in popup_pages:
-                            try:
-                                popup.wait_for_load_state("domcontentloaded", timeout=settle_timeout_ms)
-                            except Exception:
-                                pass
-                            try:
-                                popup_url = popup.url
-                            except Exception:
-                                continue
-                            result["popup_urls"].append(popup_url)
-                            result["rendered_pages"][popup_url] = _safe_content(popup)
-                            for frame_url in _collect_iframe_urls(popup):
-                                if frame_url not in result["iframes_after_click"]:
-                                    result["iframes_after_click"].append(frame_url)
-                        break
-
-                result["booking_click_success"] = click_succeeded
-                if not click_succeeded:
-                    result["detection_failure_reason"] = (
-                        "Buchungsbutton(s) gefunden und geklickt, aber keine eindeutige Navigation/Popup/"
-                        "neues iFrame beobachtet."
-                    )
-                if not result["final_url"]:
-                    result["final_url"] = page.url
-
-                result["network_domains"] = _relevant_network_domains(network_requests)
-                return result
-            finally:
-                try:
-                    browser.close()
-                except Exception:
-                    pass
+        result["network_domains"] = _relevant_network_domains(network_requests)
+        return result
     except Exception as exc:
         result["detection_failure_reason"] = f"Technischer Fehler bei der Browseranalyse: {exc.__class__.__name__}"
         return result
+    finally:
+        # Nur der leichtgewichtige Kontext wird geschlossen - der Browser-
+        # Prozess selbst bleibt für das nächste Unternehmen im Analyse-Lauf
+        # bestehen (siehe Moduldocstring "Browser-Wiederverwendung").
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+        _note_context_used()
 
 
 def analyze_booking_flow(
@@ -362,7 +474,13 @@ def analyze_booking_flow(
 
     use_cache: cached das Ergebnis pro URL innerhalb des Prozesses (siehe
         Auftrag Abschnitt 16) - eine Website wird so innerhalb eines
-        Analyse-Laufs nie mehrfach vollständig geladen.
+        Analyse-Laufs nie mehrfach vollständig geladen. Das vollständig
+        gerenderte HTML (`rendered_pages`, potenziell mehrere hundert KB pro
+        Seite) wird NICHT im Cache aufgehoben - es wird nur für den
+        aktuellen Aufruf benötigt (einmalige Weiterverarbeitung in
+        logic/competitor_detection.py), ein unbegrenzt wachsender Cache
+        voller HTML-Seiten war Teil der Ursache für Abbrüche bei sehr
+        großen Listen (siehe Moduldocstring).
     """
     if not url:
         result = dict(EMPTY_FLOW_RESULT)
@@ -375,5 +493,7 @@ def analyze_booking_flow(
     result = _run_booking_flow(url, nav_timeout_ms, click_timeout_ms, settle_timeout_ms)
 
     if use_cache:
-        _RUN_CACHE[url] = result
+        cached_result = dict(result)
+        cached_result["rendered_pages"] = {}
+        _RUN_CACHE[url] = cached_result
     return result
