@@ -13,6 +13,7 @@ import streamlit as st
 
 from logic.excel_import import ExcelImportError, read_companies
 from logic.exporter import export_bestandskunden_excel_bytes
+from logic.parallel_runner import run_parallel
 from logic.pipeline_bestandskunden import (
     APP_COLUMNS_BESTANDSKUNDEN,
     RESULT_COLUMNS_BESTANDSKUNDEN,
@@ -32,6 +33,12 @@ from ui.shared import (
     style_fit_score,
     style_prioritaet,
 )
+
+# Fallback, falls config.yaml keinen Wert hinterlegt (siehe
+# logic/parallel_runner.py - rein I/O-gebundenes Crawling, kein Playwright,
+# daher auch auf Streamlit Community Cloud unkritisch parallelisierbar).
+DEFAULT_MAX_PARALLEL_WORKERS = 10
+
 PREVIEW_COLUMNS = ["hotel_name", "website", "ort", "zimmeranzahl", "dirs21_id", "adressgruppe"]
 
 COMPACT_COLUMNS = [
@@ -294,31 +301,50 @@ def render_bestandskunden_tab(config: dict) -> None:
         total = len(selected)
         progress_bar = st.progress(0.0)
         status_line = st.empty()
-        rows = []
-        # Zwischenstand nach JEDEM Unternehmen sofort in den Session-State
-        # schreiben (analog zu ui/neukunden_tab.py, siehe Auftrag "Analyse
-        # bricht ohne Ergebnisse ab") - vorher wurde das Ergebnis erst nach
-        # der kompletten Schleife gespeichert, wodurch ein Abbruch bei sehr
-        # großen Listen ALLE bereits analysierten Unternehmen verworfen hat.
+        rows = [None] * total
+        completed = 0
         # Eigener Session-State - überschreibt NIEMALS die Neukunden-
         # Ergebnisse.
-        st.session_state["bestand_results_df"] = rows
-        for i, company in enumerate(selected, start=1):
+        st.session_state["bestand_results_df"] = []
+
+        def _analyze_one(company):
+            # Läuft in einem Worker-Thread (siehe logic/parallel_runner.py) -
+            # KEINE Streamlit-Aufrufe hier, nur die reine, zustandslose
+            # Analysefunktion (siehe logic/pipeline_common.gather_common_signals).
             name = company.get("hotel_name") or "(unbekannt)"
-
-            def _on_step(step, i=i, total=total, name=name):
-                status_line.info(f"**{i} / {total}** — {name} — {step}")
-
             try:
-                row = analyze_bestandskunde(company, config, progress_callback=_on_step)
+                return analyze_bestandskunde(company, config)
             except Exception as exc:
                 row = {col: "" for col in APP_COLUMNS_BESTANDSKUNDEN}
                 row["hotel_name"] = name
                 row["pruefhinweis"] = f"Analyse fehlgeschlagen: {exc}"
                 row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            rows.append(row)
-            st.session_state["bestand_results_df"] = rows
-            progress_bar.progress(i / total)
+                return row
+
+        def _on_result(index, company, row):
+            # Läuft sequenziell im Haupt-Thread (siehe
+            # logic/parallel_runner.run_parallel) - Zwischenstand nach JEDEM
+            # fertigen Unternehmen sofort in den Session-State schreiben
+            # (analog zu ui/neukunden_tab.py, siehe Auftrag "Analyse bricht
+            # ohne Ergebnisse ab"), damit ein Abbruch bei sehr großen Listen
+            # nicht alle bereits analysierten Unternehmen verwirft.
+            nonlocal completed
+            rows[index] = row
+            completed += 1
+            status_line.info(f"**{completed} / {total}** — zuletzt: {row.get('hotel_name', '')}")
+            st.session_state["bestand_results_df"] = [r for r in rows if r is not None]
+            progress_bar.progress(completed / total)
+
+        # Rein I/O-gebundenes Website-Crawling (kein Playwright/Chromium,
+        # siehe logic/pipeline_bestandskunden.py) - mehrere Unternehmen
+        # gleichzeitig zu analysieren verkürzt die Gesamtlaufzeit bei sehr
+        # großen Listen (~1000 Hotels) von potenziell mehreren Stunden auf
+        # wenige Minuten, ohne den auf Streamlit Community Cloud knappen
+        # Arbeitsspeicher zusätzlich zu belasten (siehe Auftrag "Bestandskunden
+        # - immer noch keine Ergebnisse nach einer Weile").
+        max_workers = config.get("analysis", {}).get("max_parallel_workers", DEFAULT_MAX_PARALLEL_WORKERS)
+        run_parallel(selected, _analyze_one, _on_result, max_workers=max_workers)
+
         status_line.empty()
         progress_bar.empty()
 

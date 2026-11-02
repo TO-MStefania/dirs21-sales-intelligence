@@ -92,6 +92,15 @@ analysis:
   # analyze.py: nach wie vielen Unternehmen ein Zwischenstand der
   # Ergebnis-Excel gespeichert wird.
   save_interval: 5
+  # Reiter "Bestandskunden" (logic/parallel_runner.py): Anzahl Unternehmen,
+  # die gleichzeitig analysiert werden. Das Crawling ist rein I/O-gebunden
+  # (requests.get, kein Playwright/Chromium) - mehrere gleichzeitige
+  # Analysen verkürzen die Gesamtlaufzeit bei sehr großen Listen deutlich,
+  # ohne nennenswert mehr Arbeitsspeicher zu benötigen (siehe Auftrag
+  # "Bestandskunden - immer noch keine Ergebnisse nach einer Weile"). Gilt
+  # NICHT für den Reiter "Neukunden" (bleibt wegen des geteilten
+  # Chromium-Prozesses bei der Deep-Detection sequenziell).
+  max_parallel_workers: 10
   # Deep-Detection der Mitbewerber-/IBE-Erkennung (Stufe 2-4, siehe
   # logic/booking_flow_detection.py und logic/competitor_detection.py) -
   # rendert die Website mit Chromium/Playwright und klickt den Buchungs-
