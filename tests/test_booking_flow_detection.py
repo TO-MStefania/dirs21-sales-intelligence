@@ -34,12 +34,16 @@ PLAYWRIGHT_READY = is_playwright_available()
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     pages = {}
+    requested_paths = None  # von Testfällen gesetzt, um blockierte Requests zu zählen
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if self.requested_paths is not None:
+            self.requested_paths.append(path)
+        content_type = b"image/png" if path.endswith((".png", ".jpg")) else b"text/html"
         body = self.pages.get(path, self.pages.get("/", b"<html><body>Leer</body></html>"))
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Type", content_type.decode())
         self.end_headers()
         self.wfile.write(body)
 
@@ -52,8 +56,8 @@ def _stop_server(server):
     server.server_close()
 
 
-def _start_server(pages: dict, port: int):
-    handler_cls = type("Handler", (_Handler,), {"pages": pages})
+def _start_server(pages: dict, port: int, requested_paths: list = None):
+    handler_cls = type("Handler", (_Handler,), {"pages": pages, "requested_paths": requested_paths})
     server = http.server.HTTPServer(("127.0.0.1", port), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -134,6 +138,32 @@ class TestAnalyzeBookingFlowMitEchtemBrowser(unittest.TestCase):
 
         self.assertTrue(result["booking_click_success"])
         self.assertEqual(result["final_url"], "http://127.0.0.1:8813/booking")
+
+    def test_bilder_und_stylesheets_werden_nicht_geladen(self):
+        # Reale Hotel-Websites sind oft medienlastig (große Bilder, Video-
+        # Hintergründe, Fonts) - das belastet einen wiederverwendeten
+        # Browser-Prozess über viele Unternehmen hinweg erheblich stärker
+        # als die übrigen Test-Fixtures. Bilder/Fonts/Stylesheets dürfen
+        # deshalb gar nicht erst angefragt werden (siehe
+        # BLOCKED_RESOURCE_TYPES) - nur das für die Erkennung benötigte
+        # Dokument selbst.
+        requested_paths = []
+        pages = {
+            "/": (
+                b'<html><head><link rel="stylesheet" href="/style.css"></head><body>'
+                b'<img src="/foto.jpg"><a href="/booking">Jetzt buchen</a></body></html>'
+            ),
+            "/booking": b"<html><body>Booking Page</body></html>",
+        }
+        server = _start_server(pages, 8818, requested_paths=requested_paths)
+        try:
+            analyze_booking_flow("http://127.0.0.1:8818/", use_cache=False)
+        finally:
+            _stop_server(server)
+
+        self.assertIn("/", requested_paths)
+        self.assertNotIn("/foto.jpg", requested_paths)
+        self.assertNotIn("/style.css", requested_paths)
 
     def test_nicht_erreichbare_domain_liefert_sauberen_fehler_statt_absturz(self):
         result = analyze_booking_flow(

@@ -426,6 +426,16 @@ def render_neukunden_tab(config: dict) -> None:
         progress_bar = st.progress(0.0)
         status_line = st.empty()
         rows = []
+        # Zwischenstand nach JEDEM Unternehmen sofort in den Session-State
+        # schreiben (siehe Auftrag "Analyse bricht ohne Ergebnisse ab") -
+        # vorher wurde das Ergebnis erst NACH der kompletten Schleife
+        # gespeichert, wodurch ein Abbruch (Fehler, unterbrochene Verbindung,
+        # Browser-/Ressourcenproblem) bei sehr großen Listen ALLE bereits
+        # analysierten Unternehmen verworfen hat, selbst wenn schon z.B. 900
+        # von 1000 fertig waren. Jetzt bleibt jeder bereits abgeschlossene
+        # Zwischenstand erhalten, sobald die Serverseite (Session-State)
+        # selbst weiterläuft.
+        st.session_state["neukunden_results_df"] = rows
         # Deep-Detection-Cache zu Beginn jedes Analyse-Laufs leeren (siehe
         # logic/booking_flow_detection.py) - ein Browser-Prozess wird für
         # den gesamten Lauf wiederverwendet und am Ende IMMER beendet
@@ -448,14 +458,15 @@ def render_neukunden_tab(config: dict) -> None:
                     row["pruefhinweis"] = f"Analyse fehlgeschlagen: {exc}"
                     row["analyse_datum"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 rows.append(row)
+                # Eigener Session-State (siehe Auftrag Abschnitt 44) -
+                # überschreibt NIEMALS die Bestandskunden-Ergebnisse. Direkt
+                # nach jedem Unternehmen aktualisiert (siehe oben).
+                st.session_state["neukunden_results_df"] = rows
                 progress_bar.progress(i / total)
         finally:
             shutdown_shared_browser()
         status_line.empty()
         progress_bar.empty()
-        # Eigener Session-State (siehe Auftrag Abschnitt 44) - überschreibt
-        # NIEMALS die Bestandskunden-Ergebnisse.
-        st.session_state["neukunden_results_df"] = rows
 
     if "neukunden_results_df" not in st.session_state or not st.session_state["neukunden_results_df"]:
         return
