@@ -139,6 +139,35 @@ class TestRunParallel(unittest.TestCase):
         )
         self.assertEqual(calls, [])
 
+    def test_wartezeit_in_der_warteschlange_zaehlt_nicht_gegen_das_zeitlimit(self):
+        # Regression: die Frist muss ab dem TATSÄCHLICHEN Start eines
+        # Elements laufen, nicht ab Batch-Beginn - sonst werden bei
+        # begrenzter max_workers-Anzahl spät gestartete, aber selbst
+        # schnelle Elemente fälschlich als "Zeitlimit überschritten"
+        # gemeldet, nur weil sie lange in der Warteschlange standen (siehe
+        # Auftrag "erneut dasselbe Problem, jetzt schon nach ca. 130-140
+        # statt 200-350 Unternehmen" - Regression des ersten
+        # Zeitlimit-Fixes selbst).
+        items = list(range(6))
+
+        def _analyze(i):
+            time.sleep(0.3)  # jedes Element braucht für sich allein 0.3s
+            return i
+
+        completed = []
+        timed_out = []
+        # Nur 1 Worker: Element 5 startet real erst nach ca. 1.5s
+        # Warteschlangenzeit - das darf NICHT als Zeitüberschreitung zählen,
+        # solange die eigentliche Bearbeitung (0.3s) unter dem Limit bleibt.
+        run_parallel(
+            items, _analyze,
+            lambda index, item, result: completed.append(item),
+            max_workers=1, item_timeout_seconds=0.5,
+            on_timeout=lambda index, item: timed_out.append(item),
+        )
+        self.assertEqual(sorted(completed), list(items))
+        self.assertEqual(timed_out, [])
+
 
 if __name__ == "__main__":
     unittest.main()

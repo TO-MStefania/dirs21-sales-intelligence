@@ -38,9 +38,22 @@ betroffene Worker-Thread selbst kann dabei nicht sauber abgebrochen werden
 (Python kann einen blockierenden Socket-Read nicht von außen unterbrechen)
 und läuft im Hintergrund weiter, bis die Website doch noch antwortet oder
 die Verbindung von außen beendet wird - er wird aber nicht mehr abgewartet.
+
+WICHTIG: die Frist läuft erst ab dem tatsächlichen START eines Elements
+(sobald ein Worker-Thread es wirklich zu bearbeiten beginnt), NICHT ab dem
+Zeitpunkt, an dem der gesamte Batch gestartet wurde. Bei begrenzter
+max_workers-Anzahl und mehr Elementen als Workern wartet ein Großteil der
+Elemente zunächst nur in der internen Warteschlange des Thread-Pools, bevor
+überhaupt ein Worker frei wird - eine ab Batch-Beginn gezählte Frist hätte
+genau diese noch gar nicht gestarteten, aber eigentlich völlig unauffälligen
+Elemente fälschlich als "Zeitlimit überschritten" gemeldet, sobald die
+Gesamtlaufzeit des Batches das Zeitlimit überschreitet (siehe Auftrag
+"erneut dasselbe Problem, jetzt aber schon nach ca. 130-140 statt 200-350
+Unternehmen" - eine Regression des ersten Zeitlimit-Fixes selbst).
 """
 
 import concurrent.futures
+import threading
 import time
 
 _POLL_INTERVAL_SECONDS = 0.5
@@ -53,24 +66,38 @@ def run_parallel(items, analyze_fn, on_result, max_workers=10, item_timeout_seco
     NICHT abgefangen - das ist Aufgabe von analyze_fn selbst (siehe
     logic/pipeline_bestandskunden.analyze_bestandskunde, wirft niemals).
 
-    Wird item_timeout_seconds gesetzt, wird für ein Element, das länger als
-    item_timeout_seconds braucht, stattdessen on_timeout(index, item)
-    aufgerufen (ebenfalls sequenziell im Haupt-Thread) und NICHT weiter auf
-    dieses Element gewartet - siehe Moduldocstring."""
+    Wird item_timeout_seconds gesetzt, wird für ein Element, dessen
+    TATSÄCHLICHE Bearbeitung (nicht die Wartezeit in der Warteschlange)
+    länger als item_timeout_seconds dauert, stattdessen on_timeout(index,
+    item) aufgerufen (ebenfalls sequenziell im Haupt-Thread) und NICHT
+    weiter auf dieses Element gewartet - siehe Moduldocstring."""
     if not items:
         return
     workers = max(1, min(max_workers, len(items)))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
     try:
-        future_to_index = {executor.submit(analyze_fn, item): index for index, item in enumerate(items)}
-
         if item_timeout_seconds is None:
+            future_to_index = {executor.submit(analyze_fn, item): index for index, item in enumerate(items)}
             for future in concurrent.futures.as_completed(future_to_index):
                 index = future_to_index[future]
                 on_result(index, items[index], future.result())
             return
 
-        deadline_by_future = {future: time.monotonic() + item_timeout_seconds for future in future_to_index}
+        start_times = {}
+        start_times_lock = threading.Lock()
+
+        def _tracked(item, index):
+            # Läuft selbst im Worker-Thread - Startzeitpunkt wird erst HIER
+            # festgehalten (nicht bei executor.submit), damit reine
+            # Wartezeit in der Thread-Pool-Warteschlange nicht fälschlich
+            # gegen das Zeitlimit zählt (siehe Moduldocstring).
+            with start_times_lock:
+                start_times[index] = time.monotonic()
+            return analyze_fn(item)
+
+        future_to_index = {
+            executor.submit(_tracked, item, index): index for index, item in enumerate(items)
+        }
         pending = set(future_to_index)
         while pending:
             done, pending = concurrent.futures.wait(
@@ -81,7 +108,13 @@ def run_parallel(items, analyze_fn, on_result, max_workers=10, item_timeout_seco
                 on_result(index, items[index], future.result())
 
             now = time.monotonic()
-            overdue = [future for future in pending if now >= deadline_by_future[future]]
+            overdue = []
+            for future in pending:
+                index = future_to_index[future]
+                with start_times_lock:
+                    started_at = start_times.get(index)
+                if started_at is not None and now - started_at >= item_timeout_seconds:
+                    overdue.append(future)
             for future in overdue:
                 pending.discard(future)
                 if on_timeout:
