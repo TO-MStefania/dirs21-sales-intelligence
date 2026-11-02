@@ -93,6 +93,52 @@ class TestRunParallel(unittest.TestCase):
         )
         self.assertEqual(results, {0: 1, 1: 2})
 
+    def test_ohne_item_timeout_wird_auch_auf_sehr_langsame_elemente_gewartet(self):
+        # Rückwärtskompatibilität: ohne item_timeout_seconds (Default None)
+        # muss sich run_parallel exakt wie vorher verhalten (unbegrenzt
+        # warten) - siehe die anderen Tests oben, die diesen Fall nutzen.
+        results = {}
+        run_parallel(
+            [0.2], lambda delay: time.sleep(delay) or "fertig",
+            lambda index, item, result: results.__setitem__(index, result),
+        )
+        self.assertEqual(results, {0: "fertig"})
+
+    def test_element_ueber_zeitlimit_wird_als_timeout_gemeldet_rest_laeuft_normal_weiter(self):
+        # Simuliert eine einzelne "tröpfelnde" Website, die (anders als bei
+        # requests' eigenem Timeout) niemals von selbst aufgibt - siehe
+        # Moduldocstring. Der Rest des Batches darf darunter nicht leiden.
+        items = ["haengt_fest", "hotel_a", "hotel_b"]
+        completed = []
+        timed_out = []
+
+        def _analyze(item):
+            if item == "haengt_fest":
+                time.sleep(5)  # absichtlich länger als das Zeitlimit unten
+            return item
+
+        start = time.time()
+        run_parallel(
+            items, _analyze,
+            lambda index, item, result: completed.append((index, result)),
+            max_workers=3, item_timeout_seconds=0.3,
+            on_timeout=lambda index, item: timed_out.append((index, item)),
+        )
+        duration = time.time() - start
+
+        self.assertEqual(timed_out, [(0, "haengt_fest")])
+        self.assertEqual(sorted(completed), [(1, "hotel_a"), (2, "hotel_b")])
+        # Darf NICHT auf das hängende Element warten (das bräuchte 5s).
+        self.assertLess(duration, 3.0)
+
+    def test_on_timeout_wird_nicht_aufgerufen_wenn_kein_timeout_konfiguriert(self):
+        calls = []
+        run_parallel(
+            [1, 2], lambda i: i, lambda index, item, result: None,
+            on_timeout=lambda index, item: calls.append(item),
+        )
+        self.assertEqual(calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()
