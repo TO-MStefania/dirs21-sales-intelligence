@@ -137,8 +137,17 @@ die beiden eigenen Abschnitte weiter unten).
 2. Im gewünschten Reiter (**Bestandskunden** oder **Neukunden**) über den
    dortigen Datei-Upload die passende Excel-Liste hochladen (dieselbe
    HubSpot-Excel-Exportstruktur wie bisher - Unternehmensname,
-   Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID).
-3. Maximale Anzahl zu analysierender Unternehmen wählen und auf
+   Unternehmensdomain, Ort, Zimmeranzahl, Adressgruppe, DIRS21-ID). Die
+   Datei darf beliebig viele weitere, für die Analyse nicht relevante
+   Spalten enthalten (z.B. interne Notizen, Ansprechpartner, CRM-Felder) -
+   nur die in `config.yaml` -> `excel.columns` gemappten Spalten werden
+   gelesen, alle anderen werden ignoriert.
+3. **Standardmäßig werden ALLE Unternehmen der hochgeladenen Liste
+   analysiert.** Optional können über "Einzelne Unternehmen von dieser
+   Analyse ausschließen" gezielt bestimmte Unternehmen abgewählt werden,
+   und über "Maximale Anzahl zu analysierender Unternehmen" (Standard:
+   "Alle") eine Obergrenze gesetzt werden - beides muss explizit gewählt
+   werden, es gibt keinen impliziten Zahlen-Deckel. Anschließend auf
    **"Bestandskunden analysieren"** bzw. **"Neukunden analysieren"**
    klicken - ein Fortschrittsbalken zeigt Position, Unternehmensname und
    aktuellen Analyseschritt; Fehler bei einzelnen Websites brechen die
