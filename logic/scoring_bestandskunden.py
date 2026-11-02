@@ -14,17 +14,48 @@ Cross-Selling-Potenzial bei einem Kunden, der DIRS21 bereits nutzt".
 GRUNDREGEL: Ein bereits als genutzt erkanntes DIRS21-Produkt erzeugt NIE
 einen Cross-Selling-Bonus und wird NIE als top_cross_selling vorgeschlagen -
 unabhängig von seinem Fit-Score (siehe Auftrag Abschnitt 5/8, Testfall 1).
+
+CROSS-SELLING-GEWICHTUNG JE MODUL (siehe Auftrag "Insights kritischer
+bewerten, nicht automatisch Prio A"): DIRS21 Insights ist ein reines
+Reporting-Tool. Ist beim Hotel bereits ein Revenue-Management-System im
+Einsatz (öffentlich NICHT zuverlässig erkennbar, siehe
+logic/dirs21_detection.py), sind viele Insights-Kennzahlen dort bereits
+enthalten - ein hoher Insights-Fit ist also unsicherer als ein hoher Fit bei
+den anderen Modulen. Der rohe Fit-Score (logic/scoring.py, unverändert und
+weiterhin EINMAL zentral berechnet) wird deshalb ausschließlich für die
+Cross-Selling-AUSWAHL/-PRIORISIERUNG in diesem Modul gewichtet
+(CROSS_SELLING_GEWICHTUNG) - Gutscheinshop/PLUS/Event-Assistent am
+höchsten (volles Gewicht), danach MICE, zuletzt Insights. Der angezeigte
+top_cross_selling_fit bleibt dabei weiterhin der TATSÄCHLICHE, ungewichtete
+Fit-Score (für Transparenz in der Detailansicht) - nur WELCHES Modul
+gewinnt und wie stark es in bestandskunden_score/_prioritaet einfließt,
+berücksichtigt die Gewichtung.
 """
 
 from logic.recommendations import ALREADY_USED_FLAG_BY_MODULE, MODULE_DISPLAY_NAMES, MODULE_ORDER
 
-# Aktive Cross-Selling-Empfehlung erst ab diesem Fit-Score (siehe Auftrag
-# Abschnitt 11) - identisch zur Schwelle in logic/recommendations.py
-# (MIN_RECOMMENDATION_SCORE), hier als eigene Konstante geführt, damit dieses
-# Modul recommendations.py nicht für seine eigene Scorelogik aufrufen muss
-# (saubere Trennung, siehe Auftrag Abschnitt 49).
+# Aktive Cross-Selling-Empfehlung erst ab diesem (gewichteten) Fit-Score
+# (siehe Auftrag Abschnitt 11) - identisch zur Schwelle in
+# logic/recommendations.py (MIN_RECOMMENDATION_SCORE), hier als eigene
+# Konstante geführt, damit dieses Modul recommendations.py nicht für seine
+# eigene Scorelogik aufrufen muss (saubere Trennung, siehe Auftrag
+# Abschnitt 49).
 MIN_CROSS_SELLING_SCORE = 60
 KEIN_CROSS_SELLING_LABEL = "Keine klare Cross-Selling-Empfehlung"
+
+# Siehe Moduldocstring "Cross-Selling-Gewichtung je Modul". 1.0 = volles
+# Gewicht (unverändert), < 1.0 dämpft den Einfluss auf Auswahl/Score.
+CROSS_SELLING_GEWICHTUNG = {
+    "plus": 1.0,
+    "gutscheinshop": 1.0,
+    "event_assistent": 1.0,
+    "mice": 0.9,
+    "insights": 0.75,
+}
+
+
+def _gewichteter_score(modul_name: str, roher_score) -> float:
+    return roher_score * CROSS_SELLING_GEWICHTUNG.get(modul_name, 1.0)
 
 # Bestandskunden-Score-Gewichtung (siehe Auftrag Abschnitt 8) - Summe 100.
 PUNKTE_STAERKSTES_POTENZIAL_MAX = 50
@@ -44,17 +75,20 @@ BETRIEBSGROESSE_STAFFEL = [
 
 
 def _ungenutzte_module_sortiert(scoring_result: dict, dirs21_flags: dict) -> list:
-    """Liefert [(modul_name, score)] für alle NOCH NICHT genutzten Module,
-    absteigend nach Fit-Score sortiert. Verwendet dieselbe "bereits genutzt"-
-    Zuordnung wie logic/recommendations.py (ALREADY_USED_FLAG_BY_MODULE) -
-    KEINE eigene, zweite Definition dieser Regel."""
+    """Liefert [(modul_name, roher_score, gewichteter_score)] für alle NOCH
+    NICHT genutzten Module, absteigend nach GEWICHTETEM Fit-Score sortiert
+    (siehe Moduldocstring "Cross-Selling-Gewichtung je Modul"). Verwendet
+    dieselbe "bereits genutzt"-Zuordnung wie logic/recommendations.py
+    (ALREADY_USED_FLAG_BY_MODULE) - KEINE eigene, zweite Definition dieser
+    Regel."""
     ungenutzt = []
     for name in MODULE_ORDER:
         flag_key = ALREADY_USED_FLAG_BY_MODULE.get(name)
         bereits_genutzt = bool(flag_key and dirs21_flags.get(flag_key))
         if not bereits_genutzt:
-            ungenutzt.append((name, scoring_result[name]["score"]))
-    return sorted(ungenutzt, key=lambda item: (-item[1], MODULE_ORDER.index(item[0])))
+            roher_score = scoring_result[name]["score"]
+            ungenutzt.append((name, roher_score, _gewichteter_score(name, roher_score)))
+    return sorted(ungenutzt, key=lambda item: (-item[2], MODULE_ORDER.index(item[0])))
 
 
 def _betriebsgroesse_punkte(zimmeranzahl) -> int:
@@ -83,21 +117,23 @@ def _datenqualitaet_punkte(crawler_status: str, zimmeranzahl, pruefhinweise: lis
 
 def top_cross_selling(scoring_result: dict, dirs21_flags: dict) -> dict:
     """top_cross_selling / top_cross_selling_fit (siehe Auftrag Abschnitt 11)
-    - nur ungenutzte Module, aktive Empfehlung erst ab MIN_CROSS_SELLING_SCORE."""
+    - nur ungenutzte Module, Auswahl und Mindestscore-Prüfung anhand des
+    GEWICHTETEN Scores (siehe Moduldocstring), top_cross_selling_fit zeigt
+    aber weiterhin den tatsächlichen (ungewichteten) Fit-Score an."""
     ungenutzt = _ungenutzte_module_sortiert(scoring_result, dirs21_flags)
     if not ungenutzt:
         return {"top_cross_selling": KEIN_CROSS_SELLING_LABEL, "top_cross_selling_fit": 0, "ungenutzt_sortiert": []}
 
-    top_name, top_score = ungenutzt[0]
-    if top_score < MIN_CROSS_SELLING_SCORE:
+    top_name, top_roher_score, top_gewichteter_score = ungenutzt[0]
+    if top_gewichteter_score < MIN_CROSS_SELLING_SCORE:
         return {
             "top_cross_selling": KEIN_CROSS_SELLING_LABEL,
-            "top_cross_selling_fit": top_score,
+            "top_cross_selling_fit": top_roher_score,
             "ungenutzt_sortiert": ungenutzt,
         }
     return {
         "top_cross_selling": MODULE_DISPLAY_NAMES[top_name],
-        "top_cross_selling_fit": top_score,
+        "top_cross_selling_fit": top_roher_score,
         "ungenutzt_sortiert": ungenutzt,
     }
 
@@ -119,31 +155,34 @@ def compute_bestandskunden_score(scoring_result: dict, dirs21_flags: dict, zimme
     """Berechnet bestandskunden_score (0-100) + bestandskunden_prioritaet
     (siehe Auftrag Abschnitt 7/8/10) sowie top_cross_selling/_fit.
 
-    A) stärkstes ungenutztes Potenzial - max 50 Punkte (linear ab Fit 0,
-       volle Punktzahl ab Fit 100 - ein Fit von 0 erzeugt 0 Bonus).
-    B) weitere relevante ungenutzte Potenziale (Fit >= 40) - max 25 Punkte,
-       gestaffelt nach Anzahl.
+    A) stärkstes ungenutztes Potenzial - max 50 Punkte (linear ab
+       gewichtetem Fit 0, volle Punktzahl ab gewichtetem Fit 100 - ein Fit
+       von 0 erzeugt 0 Bonus). Verwendet den GEWICHTETEN Fit-Score (siehe
+       Moduldocstring "Cross-Selling-Gewichtung je Modul") - ein isolierter,
+       hoher Insights-Fit fließt dadurch bewusst gedämpft ein.
+    B) weitere relevante ungenutzte Potenziale (gewichteter Fit >= 40) -
+       max 25 Punkte, gestaffelt nach Anzahl.
     C) Betriebsgröße - max 15 Punkte, ergänzend (siehe Auftrag Abschnitt 9).
     D) Datenqualität - max 10 Punkte.
     """
     top = top_cross_selling(scoring_result, dirs21_flags)
     ungenutzt = top["ungenutzt_sortiert"]
 
-    staerkstes_fit = ungenutzt[0][1] if ungenutzt else 0
-    punkte_a = round(PUNKTE_STAERKSTES_POTENZIAL_MAX * (staerkstes_fit / 100))
+    staerkstes_gewichtet = ungenutzt[0][2] if ungenutzt else 0
+    punkte_a = round(PUNKTE_STAERKSTES_POTENZIAL_MAX * (staerkstes_gewichtet / 100))
 
-    weitere_relevante = [score for _, score in ungenutzt[1:] if score >= 40]
+    weitere_relevante = [gewichtet for _, _, gewichtet in ungenutzt[1:] if gewichtet >= 40]
     # Gestaffelt statt linear addiert (siehe Auftrag Abschnitt 8 Beispiel:
     # mehrere weitere Potenziale erhöhen den Bonus, aber nicht unbegrenzt).
     punkte_b = min(PUNKTE_WEITERE_POTENZIALE_MAX, 10 * len(weitere_relevante) + sum(
-        5 for score in weitere_relevante if score >= 70
+        5 for gewichtet in weitere_relevante if gewichtet >= 70
     ))
 
     punkte_c = min(PUNKTE_BETRIEBSGROESSE_MAX, _betriebsgroesse_punkte(zimmeranzahl))
     punkte_d = _datenqualitaet_punkte(crawler_status, zimmeranzahl, pruefhinweise)
 
     score = min(100, punkte_a + punkte_b + punkte_c + punkte_d)
-    hat_starke_chance = staerkstes_fit >= MIN_CROSS_SELLING_SCORE
+    hat_starke_chance = staerkstes_gewichtet >= MIN_CROSS_SELLING_SCORE
     prioritaet = _bestandskunden_prioritaet(score, hat_starke_chance)
 
     return {

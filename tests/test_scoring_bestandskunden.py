@@ -76,6 +76,59 @@ class TestBestandskundenFaelle(unittest.TestCase):
         self.assertIn(row["bestandskunden_prioritaet"], ("A", "B"))
 
 
+class TestInsightsKritischerGewichtet(unittest.TestCase):
+    """Auftrag "Insights kritischer bewerten, nicht automatisch Prio A":
+    Insights wird für die Cross-Selling-Auswahl/-Priorisierung niedriger
+    gewichtet als Gutscheinshop/PLUS/Event-Assistent (höchste Gewichtung)
+    und MICE (mittlere Gewichtung) - siehe
+    logic/scoring_bestandskunden.CROSS_SELLING_GEWICHTUNG."""
+
+    def test_insights_verliert_gegen_gleich_hohen_gutscheinshop_fit(self):
+        # Bei identischem rohen Fit-Score muss das höher gewichtete Modul
+        # gewinnen, nicht Insights (vorher: reine MODULE_ORDER-Reihenfolge
+        # hätte PLUS vor Insights gestellt, aber bei einem Unentschieden
+        # zwischen Gutscheinshop/Insights hätte die alte, ungewichtete
+        # Logik Insights NICHT automatisch benachteiligt).
+        scoring_result = {
+            "plus": {"score": 0}, "gutscheinshop": {"score": 70}, "mice": {"score": 0},
+            "event_assistent": {"score": 0}, "insights": {"score": 70},
+        }
+        result = top_cross_selling(scoring_result, {})
+        self.assertEqual(result["top_cross_selling"], "Gutscheinshop")
+        # top_cross_selling_fit zeigt weiterhin den echten, ungewichteten Fit.
+        self.assertEqual(result["top_cross_selling_fit"], 70)
+
+    def test_isolierter_hoher_insights_fit_erzeugt_keine_prioritaet_a(self):
+        # Nur Insights hat einen hohen Fit, alle anderen Module liegen bei 0 -
+        # das darf nicht automatisch zu Priorität A führen (Kernanliegen des
+        # Auftrags).
+        scoring_result = {
+            "plus": {"score": 0}, "gutscheinshop": {"score": 0}, "mice": {"score": 0},
+            "event_assistent": {"score": 0}, "insights": {"score": 95},
+        }
+        ergebnis = compute_bestandskunden_score(scoring_result, {}, 40, "ok", [])
+        self.assertNotEqual(ergebnis["bestandskunden_prioritaet"], "A")
+
+    def test_sehr_starker_insights_fit_kann_trotzdem_noch_empfohlen_werden(self):
+        # Die Gewichtung soll Insights kritischer, aber nicht komplett
+        # unmöglich machen - ein sehr hoher roher Fit (100) reicht bei einem
+        # Gewicht von 0.75 weiterhin über die Mindestschwelle von 60.
+        scoring_result = {
+            "plus": {"score": 0}, "gutscheinshop": {"score": 0}, "mice": {"score": 0},
+            "event_assistent": {"score": 0}, "insights": {"score": 100},
+        }
+        result = top_cross_selling(scoring_result, {})
+        self.assertEqual(result["top_cross_selling"], "Insights")
+
+    def test_mice_liegt_in_der_gewichtung_zwischen_insights_und_den_top_modulen(self):
+        scoring_result = {
+            "plus": {"score": 0}, "gutscheinshop": {"score": 0}, "mice": {"score": 70},
+            "event_assistent": {"score": 0}, "insights": {"score": 70},
+        }
+        result = top_cross_selling(scoring_result, {})
+        self.assertEqual(result["top_cross_selling"], "MICE")
+
+
 class TestBereitsGenutzteModuleOhneBonus(unittest.TestCase):
     """Auftrag Abschnitt 8: "Bereits genutzte Produkte erzeugen keinen
     Cross-Selling-Bonus." """
